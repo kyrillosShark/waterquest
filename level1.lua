@@ -1,59 +1,96 @@
 local level1 = {}
+local calculator = require "calculator"
+local Gamestate = require "gamestate"
+local menu = require "menu"
+  -- Assuming your menu state is in menu.l\ua
 
+
+
+-- Require Gamestate for state management
+
+local calculatorActive = false
+ 
 -- Define possible game states
 local STATES = {
     DIALOGUE = "dialogue",
+    MEASURING = "measuring",
     MOVING = "moving",
+    CLOUDS = "clouds",
     RAINING = "raining",
     QUESTION = "question",
-    GAMEPLAY = "gameplay"
+
+    GAMEPLAY = "gameplay",
+    DISPLAY_MEASUREMENTS = "display_measurements",
+    FEEDBACK = "feedback",
+    --CALCULATOR = "calculator",
+    LEVEL_COMPLETE = "level_complete"  -- Added new state
 }
 
 -- Local variables for level-specific assets
-local clouds = {}
 local grasses = {}
 local grassImages = {}
-local cloudImage
-local raindropImage
-
+local correctCount = 0 -- Number of correct answers
+local maxQuestions = 3 -- Number of questions needed to advance
+local roofSegments = {}
 -- Feedback assets
 local checkImage
 local xImage
 local feedbackState = nil -- "correct" or "incorrect"
-local feedbackTimer = 0
-local feedbackDuration = 2
-
--- House and Tank variables
-local house = { x = 50, y = 100, width = 600, height = 600 }
-local tank = {
-    x = 490, -- Adjusted position to align with house removal of gutters
-    y = 350,
-    width = 100,
-    height = 100,
-    waterLevel = 10,
-    maxWater = 200
+local menuButton = {
+    x = 20,
+    y = 560,
+    width = 40,  -- Made smaller since we're using an arrow
+    height = 40,
+    text = "<"   -- Simple ASCII arrow character
 }
+
+-- School and Roof variables
+local school = { x = 50, y = 100, width = 600, height = 2000 }
+local roof = {
+    baseLength = 400, -- Length of the base of the roof
+    baseWidth = 150,  -- Width/depth of the building
+    height = 140      -- Height of the roof (from base to peak)
+}
+
+-- Main building and roof offset
+local mainBuilding = {}
+local roofOffset = 40
+
+-- Tank variables
+local tank = {
+    x = 0, -- We'll set this in level1:enter()
+    y = 350,
+    width = 300,
+    height = 200,
+    waterLevel = 10,
+    maxWater = 200,
+    image = nil -- Placeholder for the tank image
+}
+
+-- Derived tank properties
+tank.radius = 2
+tank.waterLevel = 5
+
+-- Tube variables
+local tubeSegments = {}
+local waterDroplets = {}
+local tubeDropletSpawnInterval = 0.02
+local tubeDropletSpawnTimer = 0
 
 -- Rain systems
 local raindrops = {}
-local rainParticles = {}
-local rainParticleSpawnTimer = 0
-local rainParticleSpawnInterval = 0.1 -- Spawn rain particles every 0.1 seconds
-
 local raindropSpeedMin = 300
-local raindropSpeedMax = 500
-local raindropSpawnInterval = 0.05 -- Time between each raindrop spawn
+local raindropSpeedMax = 800
+local raindropSpawnInterval = 0.02
 local raindropSpawnTimer = 0
-
--- Derived tank properties
-tank.radius = tank.width / 2
+local maxRaindrops = 1000
 
 -- Question and user input
-local question = "Calculate the volume of water in the tank based on the current water level."
+local question = "Based on the measurements, calculate the volume of the roof."
 local correctAnswer = 0
 local userAnswer = ""
 
--- Margin of error (epsilon) for floating-point comparison
+-- Margin of error for floating-point comparison
 local epsilon = 0.1
 
 -- Time-based variable for smooth animation
@@ -73,69 +110,167 @@ local titleFont
 local planeImage
 local bannerImage
 local planes = {}
-local planeSpawnInterval = 7 -- seconds between plane spawns
+local planeSpawnInterval = 10
 local planeSpawnTimer = 0
-local planeSpeed = 150 -- pixels per second
+local planeSpeed = 150
 
 -- Dialogue sequence for characters
 local dialogue = {}
 local currentDialogue = 1
 local state = STATES.DIALOGUE
 
+-- Dialogue sequence identifier
+local dialogueSequence = "initial"
+
 -- Character definitions
 local character2 = {
     image = nil,
-    x = screenWidth / 2 + 250,
-    y = screenHeight, -- Positioned above the ground
+    x = screenWidth / 2 + 270,
+    y = screenHeight,
     scale = 0.5,
     velocityX = 0,
     velocityY = 0
 }
 
 -- Variables for the raining sequence
-local backgroundColor = {0.529, 0.808, 0.980} -- Initial sky blue background
-local targetBackgroundColor = {0.1, 0.1, 0.2} -- Darker background color
+local initialBackgroundColor = {0.529, 0.808, 0.980}
+local targetBackgroundColor = {0.5, 0.7, 0.7}
+local backgroundColor = {0.529, 0.808, 0.980}
+
 local rainingTimer = 0
-local rainingDuration = 5 -- Duration of the raining animation in seconds
+local rainingDuration = 1
 local initialWaterLevel
 local targetWaterLevel
 
--- House image variable
-local houseImage
+-- Define a unified water color
+local waterColor = {0.000, 0.749, 1.000, 0.6}
 
--- Define the water bar
-local waterBar = {
-    x = tank.x + tank.width - 170, -- Position the bar to the right of the tank
-    y = tank.y,
-    width = 20,
-    height = tank.height + 30,
-    waterLevel = 0,               -- Initial water level
-    maxWater = 200,               -- Maximum water level
-    fillRate = 100,               -- Units per second
-    filled = false                -- Flag to check if the bar is filled
+-- Water mask points for animations
+local waterMaskPoints = {}
+local waterWaveTime = 2
+local waterWaveSpeed = 5
+local waterWaveHeight = 2
+
+-- Variables for background color transition back to initial color
+local backgroundReturnTimer = 0
+local backgroundReturnDuration = 1
+
+-- Measuring variables
+local measuringActive = false
+local measuringStartX, measuringStartY = 0, 0
+local measuringEndX, measuringEndY = 0, 0
+local measuringPath = nil
+local measurements = {}
+local maxMeasurements = 2
+
+-- Predefined paths for measuring
+local predefinedPaths = {}
+local completedMeasurements = {}
+
+-- Progress bar variables
+local progressBar = {
+    x = 50, -- Starting X position
+    y = 20, -- Starting Y position (from the top)
+    width = screenWidth - 100, -- Width of the progress bar
+    height = 20, -- Height of the progress bar
+    borderColor = {0, 0, 0, 1}, -- Black border
+    backgroundColor = {0.7, 0.7, 0.7, 1}, -- Grey background
+    fillColor = {0, 0.5, 1, 1}, -- Blue fill
+    borderThickness = 2, -- Thickness of the border
+}
+local calculatorButton = {
+    x = 90,
+    y = 560,
+    width = 60,
+    height = 40,
+    text = "CALC"
 }
 
--- Define a unified water color
-local waterColor = {0.000, 0.749, 1.000, 0.6} -- Same as the tank's water color
 
--- Function called when entering Level 1
+-- Optional: Initialize a displayedProgress variable for smooth animation
+local displayedProgress = 0
+
+-- Helper function to draw a water drop
+function level1:drawWaterDrop(x, y, size)
+    local points = {}
+    for i = 0, 30 do
+        local angle = (i / 30) * math.pi * 2
+        local radius = size * (1 - 0.3 * math.sin(angle))
+        if angle > math.pi then
+            radius = radius * 0.8
+        end
+        table.insert(points, x + math.sin(angle) * radius)
+        table.insert(points, y + math.cos(angle) * radius * 1.3)
+    end
+    love.graphics.polygon("fill", points)
+end
+
+-- Assuming you have a next level defined
+local nextLevel = require("level2") -- Replace "level3" with your actual next level script
+
+-- Function called when entering Level 2
 function level1:enter()
     print("Entering Level 1")
 
-    -- Load fonts
-    defaultFont = love.graphics.newFont("assets/fonts/OpenSans-Regular.ttf", 18)
-    questionFont = love.graphics.newFont("assets/fonts/OpenSans-Bold.ttf", 22)
-    feedbackFont = love.graphics.newFont("assets/fonts/OpenSans-Bold.ttf", 28)
-    titleFont = love.graphics.newFont("assets/fonts/OpenSans-Bold.ttf", 36)
+    -- Load fonts and other assets with error handling
+    local success, err = pcall(function()
+        defaultFont = love.graphics.newFont("assets/fonts/OpenSans-Regular.ttf", 18)
+        questionFont = love.graphics.newFont("assets/fonts/OpenSans-Bold.ttf", 22)
+        feedbackFont = love.graphics.newFont("assets/fonts/OpenSans-Bold.ttf", 28)
+        titleFont = love.graphics.newFont("assets/fonts/OpenSans-Bold.ttf", 36)
+        menuButtonFont = love.graphics.newFont("assets/fonts/OpenSans-Bold.ttf", 18)
+        raindropImage = love.graphics.newImage("assets/images/raindrop.png")
+        -- Load grass images
+        grassImages[1] = love.graphics.newImage("assets/images/grass.png")
+        wallTexture = love.graphics.newImage("assets/images/wall_texture.jpeg")
+        columnTexture = love.graphics.newImage("assets/images/wall_texture.jpeg")
+        --roofTexture = love.graphics.newImage("assets/images/roof_texture.jpeg") -- Load roof texture
+        
+        -- Load cloud image
+        cloudImage = love.graphics.newImage("assets/images/clouds.png")
 
-    -- Load grass images
-    grassImages[1] = love.graphics.newImage("assets/images/grass.png")
+        -- Load feedback images
+        checkImage = love.graphics.newImage("assets/images/check.png")
+        xImage = love.graphics.newImage("assets/images/x.png")
+
+        -- Load plane and banner images
+        planeImage = love.graphics.newImage("assets/images/plane.png")
+        bannerImage = love.graphics.newImage("assets/images/banner.png")
+
+        -- Load Character Two's image
+        character2.image = love.graphics.newImage("assets/images/character2.png")
+        calculator:init()
+        calculator:setPosition(screenWidth - 400, 100)  -- Set position but don't activate
+        calculator:deactivate()  -- Ensure calculator starts deactivated
+
+        -- Load tank image
+        tank.image = love.graphics.newImage("assets/images/tank.png")
+        if not tank.image then
+            print("Failed to load tank image.")
+        else
+            print("Tank image loaded successfully.")
+        end
+
+        -- Load the rain sound
+        rainSound = love.audio.newSource("assets/sounds/rain.mp3", "stream")
+        rainSound:setLooping(true)
+        rainSound:setVolume(0.5)
+        kenyanFlagImage = love.graphics.newImage("assets/images/flag_of_kenya.png")
+
+    end)
+
+    if not success then
+        print("Error loading assets:", err)
+        return
+    else
+        print("All assets loaded successfully.")
+    end
 
     -- Create multiple grass instances
     for i = 1, 8 do
         table.insert(grasses, {
             x = i * 100,
-            y = screenHeight, -- Positioned at the bottom
+            y = screenHeight + 40,
             image = grassImages[1],
             swayOffset = math.random(0, 2 * math.pi),
             swayAmplitude = math.random(2, 4),
@@ -143,30 +278,8 @@ function level1:enter()
         })
     end
 
-    -- Load cloud image
-    cloudImage = love.graphics.newImage("assets/images/clouds.png")
-
-    -- Initialize clouds with higher y positions
-    for i = 1, 5 do
-        table.insert(clouds, {
-            x = math.random(0, screenWidth - cloudImage:getWidth()),
-            y = math.random(20, 100), -- Adjusted range for higher position
-            speed = math.random(10, 30),
-            scale = math.random(50, 100) / 100,
-            direction = math.random() < 0.5 and -1 or 1
-        })
-    end
-
-    -- Load raindrop image
-    raindropImage = love.graphics.newImage("assets/images/raindrop.png")
-
-    -- Load feedback images
-    checkImage = love.graphics.newImage("assets/images/check.png")
-    xImage = love.graphics.newImage("assets/images/x.png")
-
-    -- Load plane and banner images
-    planeImage = love.graphics.newImage("assets/images/plane.png")
-    bannerImage = love.graphics.newImage("assets/images/banner.png")
+    -- Initialize clouds as empty
+    clouds = {}
 
     -- Initialize planes table
     planes = {}
@@ -175,7 +288,7 @@ function level1:enter()
     dialogue = {
         {
             character = "assets/images/character2.png",
-            text = "Welcome to our game! We collect rainwater to sustain our community."
+            text = "Welcome to Clean Water Quest! We are on a mission to save water."
         },
         {
             character = "assets/images/character2.png",
@@ -183,62 +296,363 @@ function level1:enter()
         },
         {
             character = "assets/images/character2.png",
-            text = "Watch as we gather rainwater, and then solve the challenge!"
-        }
-        -- Additional dialogue entries can be added here
+            text = "First, let's measure the sides of the roof."
+        },
     }
-
-    -- Load Character Two's image with error handling
-    local success, err = pcall(function()
-        character2.image = love.graphics.newImage("assets/images/character2.png")
-    end)
-    if success then
-        print("Character Two image loaded successfully.")
-    else
-        print("Error loading Character Two image:", err)
-    end
-
-    -- Load the house image with error handling
-    success, err = pcall(function()
-        houseImage = love.graphics.newImage("assets/images/house.png")
-    end)
-    if success then
-        print("House image loaded successfully.")
-    else
-        print("Error loading house image:", err)
-        -- Handle the error as needed, e.g., use a fallback or exit
-    end
 
     -- Initialize timers and state
     planeSpawnTimer = 0
-    correctAnswer = math.pi * (tank.radius)^2 * tank.waterLevel
     state = STATES.DIALOGUE
     currentDialogue = 1
     userAnswer = ""
     feedbackState = nil
-    feedbackTimer = 0
+    dialogueSequence = "initial"
 
     -- Initialize background color
-    backgroundColor = {0.529, 0.808, 0.980}
+    backgroundColor = {initialBackgroundColor[1], initialBackgroundColor[2], initialBackgroundColor[3]}
 
-    -- Initialize the water bar
-    waterBar.waterLevel = 0
-    waterBar.filled = false
+    -- Initialize correct count
+    correctCount = 0 -- Reset correctCount on entering the level
 
-    -- Ensure that the tank does not start filled
-    tank.waterLevel = 10
+    -- Setup initial roof and building
+    self:setupRoofAndBuilding()
+end
+local function isMouseOver(button, mx, my)
+    return mx >= button.x and mx <= button.x + button.width and
+           my >= button.y and my <= button.y + button.height
 end
 
--- Function called when leaving Level 1
+-- Function to setup roof and building dimensions
+function level1:setupRoofAndBuilding()
+    -- Generate a random scaling factor for this problem (between 0.8 and 1.5)
+    local scalingFactor = love.math.random() * 0.7 + 0.8  -- This gives us random values between 0.8 and 1.5
+    
+    -- Fixed visual dimensions (these control how it looks)
+    local visualWidth = 600
+    local visualBaseLength = 400
+    local visualBaseWidth = 150
+    local visualHeight = 140
+
+    -- Apply scaling factor to get random actual values while keeping visual dimensions the same
+    roof.width = visualWidth * scalingFactor  -- Random actual width
+    roof.baseLength = visualBaseLength * scalingFactor -- Random actual baseLength
+    roof.baseWidth = visualBaseWidth * scalingFactor -- Random actual baseWidth
+    roof.height = visualHeight * scalingFactor -- Random actual height
+    
+    -- Store the visual dimensions separately (these control how it's drawn)
+    roof.visualWidth = visualWidth
+    roof.visualBaseLength = visualBaseLength
+    roof.visualBaseWidth = visualBaseWidth
+    roof.visualHeight = visualHeight
+
+    -- Define dimensions for the main building (using visual dimensions for drawing)
+    mainBuilding = {
+        x = school.x + 20,
+        y = school.y + visualHeight,
+        width = visualWidth,
+        height = 300
+    }
+
+    -- Update tank position to be directly under the water tube
+    tank.x = mainBuilding.x + mainBuilding.width - tank.width / 2
+    tank.y = mainBuilding.y + mainBuilding.height + 40
+
+    -- Define tube segments based on the school and tank positions
+    tubeSegments = {
+        {
+            startX = mainBuilding.x,
+            startY = mainBuilding.y + 10,
+            endX = mainBuilding.x + mainBuilding.width,
+            endY = mainBuilding.y
+        },
+        {
+            startX = mainBuilding.x + mainBuilding.width,
+            startY = mainBuilding.y,
+            endX = mainBuilding.x + mainBuilding.width,
+            endY = tank.y
+        }
+    }
+
+    -- Adjust Character Two's velocity for faster movement
+    character2.velocityX = 400
+    character2.velocityY = 600
+
+    -- Define roof parameters for drawing (using visual dimensions)
+    local roofX = mainBuilding.x
+    local roofY = mainBuilding.y
+    local roofWidth = mainBuilding.width
+    local roofHeight = visualHeight
+
+    -- Define predefined measuring paths (using actual scaled values for measurements)
+    predefinedPaths = {
+        {
+            name = "Left Side",
+            startX = roofX + roofOffset,
+            startY = roofY - roofHeight,
+            endX = roofX,
+            endY = roofY,
+            actualLength = roof.height  -- This will use the scaled value
+        },
+        {
+            name = "Top Side",
+            startX = roofX + roofOffset,
+            startY = roofY - roofHeight,
+            endX = roofX + roofWidth + roofOffset,
+            endY = roofY - roofHeight,
+            actualLength = roof.width  -- This will use the scaled value
+        }
+    }
+
+    -- Store the scaling factor for calculations
+    roof.scalingFactor = scalingFactor
+
+    -- Clear any previous measurements
+    measurements = {}
+
+    -- Reset measuring variables
+    measuringActive = false
+    measuringStartX, measuringStartY = 0, 0
+    measuringEndX, measuringEndY = 0, 0
+    measuringPath = nil
+end
+
+-- Function to calculate distance from a point to a line segment
+function level1:pointToSegmentDistance(px, py, x1, y1, x2, y2)
+    local dx = x2 - x1
+    local dy = y2 - y1
+    if dx == 0 and dy == 0 then
+        return math.sqrt((px - x1)^2 + (py - y1)^2)
+    end
+
+    local t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+    t = math.max(0, math.min(1, t))
+    local closestX = x1 + t * dx
+    local closestY = y1 + t * dy
+    return math.sqrt((px - closestX)^2 + (py - closestY)^2)
+end
+
+function level1:drawSchool()
+    -- Existing parameters
+    local numWaves = 40
+    local amplitude = 3
+    local numPoints = 200
+    local pointsPerWave = numPoints / numWaves
+    local shadowOffsetX = 30
+    local shadowOffsetY = 50
+
+    -- Draw the main building wall with texture
+    self:drawTexturedPolygon(wallTexture, "fill",
+        mainBuilding.x, mainBuilding.y,
+        mainBuilding.x + mainBuilding.width, mainBuilding.y,
+        mainBuilding.x + mainBuilding.width, mainBuilding.y + mainBuilding.height + 100,
+        mainBuilding.x, mainBuilding.y + mainBuilding.height + 100
+    )
+
+    -- Parameters for the wavy roof
+    local roofWidth = roof.visualWidth
+    local roofHeight = roof.visualHeight
+    local roofX = mainBuilding.x
+    local roofY = mainBuilding.y
+
+    -- Initialize an empty table to store roof points
+    local roofPoints = {}
+
+    -- Add the bottom-left point of the roof
+    table.insert(roofPoints, roofX)
+    table.insert(roofPoints, roofY)
+
+    -- Generate points along the bottom edge with sine wave variations
+    for i = 1, numPoints do
+        local t = i / numPoints
+        local x = roofX + t * roofWidth
+        local sineValue = math.sin(t * numWaves * math.pi * 2)
+        local y = roofY + sineValue * amplitude
+
+        table.insert(roofPoints, x)
+        table.insert(roofPoints, y)
+    end
+
+    -- Add the top-right point of the roof
+    table.insert(roofPoints, roofX + roofWidth + roofOffset)
+    table.insert(roofPoints, roofY - roofHeight)
+
+    -- Add the top-left point of the roof to close the polygon
+    table.insert(roofPoints, roofX + roofOffset)
+    table.insert(roofPoints, roofY - roofHeight)
+
+    -- Draw the wavy roof polygon with texture
+    love.graphics.setColor(0.0, 0.2, 0.8, 0.9)
+    self:drawTexturedPolygon(roofTexture, "fill", unpack(roofPoints))
+    love.graphics.setColor(0.0, 0.0, 0.0, 0.7)
+    self:drawTexturedPolygon(roofTexture, "fill", unpack(roofPoints))
+
+    -- Optional: Draw the outline of the roof for better visibility
+    love.graphics.setColor(0.0, 0.2, 0.8, 0.4)
+    love.graphics.setLineWidth(2)
+    love.graphics.polygon("line", unpack(roofPoints))
+    love.graphics.setLineWidth(1)
+
+    -- Draw shadows from roof to wall
+    local shadowPoints = {
+        roofX, roofY,
+        roofX + roofWidth, roofY,
+        roofX + roofWidth + shadowOffsetX, roofY + shadowOffsetY,
+        roofX + shadowOffsetX, roofY + shadowOffsetY
+    }
+
+    -- Draw the shadow polygon
+    love.graphics.setColor(0, 0, 0, 0.2)
+    love.graphics.polygon("fill", unpack(shadowPoints))
+
+    love.graphics.setColor(1, 1, 1)
+
+    -- Draw Left Side Wall with texture
+    love.graphics.setColor(1, 1, 1)
+    self:drawTexturedPolygon(wallTexture, "fill",
+        roofX, roofY + 5,
+        roofX + roofOffset, roofY + 5,
+        roofX + roofOffset, roofY + mainBuilding.height,
+        roofX, roofY + mainBuilding.height
+    )
+
+    -- Draw flagpole and flag
+    love.graphics.setColor(0.1, 0.1, 0.1)
+    local flagpoleX = roofX + roofWidth + roofOffset + 30
+    love.graphics.rectangle("fill", flagpoleX, roofY - roofHeight - 30, 3, mainBuilding.height + roofHeight + 60)
+
+    -- Initialize wave parameters for flag animation
+    if not level1.flagWaveTime then
+        level1.flagWaveTime = 0
+        level1.flagWaveSpeed = 4
+        level1.flagWaveAmplitude = 3
+        level1.flagPoints = 8
+    end
+
+    level1.flagWaveTime = level1.flagWaveTime + love.timer.getDelta() * level1.flagWaveSpeed
+
+    -- Create animated flag points
+    local flagWidth = 77
+    local flagHeight = 80
+    local points = {}
+
+    -- Generate wavy points for flag
+    for i = 0, level1.flagPoints do
+        local xPercent = i / level1.flagPoints
+        local xPos = flagpoleX + 3 + (xPercent * flagWidth)
+        local waveOffset = math.sin(level1.flagWaveTime + (xPercent * 3)) * level1.flagWaveAmplitude
+
+        table.insert(points, xPos)
+        table.insert(points, roofY - roofHeight - 30 + waveOffset)
+        table.insert(points, xPos)
+        table.insert(points, roofY - roofHeight + 50 + waveOffset)
+    end
+
+    -- Draw the flag with wrinkle shadows
+    for i = 1, #points / 4 - 1 do
+        local x1, y1 = points[i * 4 - 3], points[i * 4 - 2]
+        local x2, y2 = points[i * 4 - 1], points[i * 4]
+        local x3, y3 = points[i * 4 + 1], points[i * 4 + 2]
+        local x4, y4 = points[i * 4 + 3], points[i * 4 + 4]
+
+        local wavePhase = math.sin(level1.flagWaveTime + (i / #points * 3))
+        local shadowIntensity = math.abs(wavePhase) * 0.3
+
+        local mesh = love.graphics.newMesh({
+            {x1, y1, (i - 1) / (level1.flagPoints - 1), 0},
+            {x3, y3, i / (level1.flagPoints - 1), 0},
+            {x4, y4, i / (level1.flagPoints - 1), 1},
+            {x2, y2, (i - 1) / (level1.flagPoints - 1), 1}
+        }, "fan", "static")
+
+        mesh:setTexture(kenyanFlagImage)
+        love.graphics.setColor(1 - shadowIntensity, 1 - shadowIntensity, 1 - shadowIntensity, 1)
+        love.graphics.draw(mesh)
+        mesh:release()
+
+        if wavePhase > 0.7 then
+            love.graphics.setColor(0, 0, 0, 0.1)
+            love.graphics.line(x1, y1, x2, y2)
+        end
+    end
+
+    -- Add faint white seams
+    love.graphics.setColor(1, 1, 1, 0.5)
+    love.graphics.setLineWidth(1)
+
+    for wave = 1, numWaves do
+        local pointIndex = math.floor(wave * pointsPerWave)
+        if pointIndex * 2 + 2 <= #roofPoints then
+            local x = roofPoints[pointIndex * 2 - 1]
+            local y = roofPoints[pointIndex * 2]
+            love.graphics.line(x, y, x + 30, roofY - 130)
+        end
+    end
+
+    love.graphics.setColor(1, 1, 1)
+end
+
+function level1:drawTexturedPolygon(texture, mode, ...)
+    local vertices = {...}
+
+    -- Create mesh with the vertices
+    local mesh = love.graphics.newMesh({
+        {"VertexPosition", "float", 2},
+        {"VertexTexCoord", "float", 2}
+    }, #vertices / 2, "fan", "static")
+
+    -- Calculate bounds
+    local minX, minY = math.huge, math.huge
+    local maxX, maxY = -math.huge, -math.huge
+
+    for i = 1, #vertices, 2 do
+        local x, y = vertices[i], vertices[i + 1]
+        minX = math.min(minX, x)
+        minY = math.min(minY, y)
+        maxX = math.max(maxX, x)
+        maxY = math.max(maxY, y)
+    end
+
+    local width = maxX - minX
+    local height = maxY - minY
+
+    -- Set vertices with texture coordinates
+    for i = 1, #vertices, 2 do
+        local x, y = vertices[i], vertices[i + 1]
+        local u = (x - minX) / width
+        local v = (y - minY) / height
+        mesh:setVertex((i - 1) / 2 + 1, {
+            x, y,
+            u, v
+        })
+    end
+
+    mesh:setTexture(texture)
+    love.graphics.draw(mesh)
+    mesh:release()
+end
+
+-- Function called when leaving Level 2
 function level1:leave()
-    print("Leaving Level 1")
+    print("Leaving Level 2")
+    -- Clean up resources if necessary
+    if rainSound then
+        love.audio.stop(rainSound)
+        rainSound:release()
+        rainSound = nil
+        print("Rain sound stopped and released.")
+    end
 end
 
 -- Function to update game logic each frame
 function level1:update(dt)
     -- Update time for smooth sway animation
     time = time + dt
-
+    if calculatorActive then
+        if calculator then
+            calculator:update(dt)
+        end
+  
+    end
     if state == STATES.DIALOGUE then
         -- During dialogue, skip other updates
         return
@@ -248,70 +662,63 @@ function level1:update(dt)
         character2.y = character2.y + character2.velocityY * dt
 
         -- Check if Character Two is off-screen
-        if character2.image and (character2.x > screenWidth + character2.image:getWidth() or 
+        if character2.image and (character2.x > screenWidth + character2.image:getWidth() or
            character2.y > screenHeight + character2.image:getHeight()) then
-            state = STATES.RAINING -- Transition to RAINING state
-            print("Character Two moved off-screen. Transitioning to RAINING state.")
+            state = STATES.CLOUDS -- Transition to CLOUDS state
+            print("Character Two moved off-screen. Transitioning to CLOUDS state.")
 
-            -- Initialize variables for RAINING state
+            -- Initialize variables for CLOUDS state
+            cloudSpawnTimer = 0
             rainingTimer = 0
             initialWaterLevel = tank.waterLevel
             targetWaterLevel = math.min(tank.waterLevel + 50, tank.maxWater)
         end
 
-    elseif state == STATES.RAINING then
-        rainingTimer = rainingTimer + dt
+    elseif state == STATES.MEASURING then
+        if measuringActive and measuringPath then
+            local mouseX, mouseY = love.mouse.getPosition()
+            -- Project mouse position onto the path
+            local startX = measuringStartX
+            local startY = measuringStartY
+            local endX = measuringPath.endX
+            local endY = measuringPath.endY
 
-        if not waterBar.filled then
-            -- Fill the water bar
-            waterBar.waterLevel = waterBar.waterLevel + waterBar.fillRate * dt
-            if waterBar.waterLevel >= waterBar.maxWater then
-                waterBar.waterLevel = waterBar.maxWater
-                waterBar.filled = true
-                print("Water bar filled. Starting tank filling.")
+            -- If measuring in reverse direction, swap start and end
+            if measuringDirection == -1 then
+                startX, endX = endX, startX
+                startY, endY = endY, startY
             end
-        else
-            -- Proceed to fill the tank as before
-            -- Increase number of clouds if needed
-            self:increaseClouds(dt)
 
-            -- Update clouds' positions
-            self:updateClouds(dt)
+            local APx = mouseX - startX
+            local APy = mouseY - startY
+            local ABx = endX - startX
+            local ABy = endY - startY
 
-            -- Gradually darken background
-            self:updateBackgroundDarkness(dt)
+            local abSquared = ABx * ABx + ABy * ABy
+            local apDotAb = APx * ABx + APy * ABy
 
-            -- Spawn rain particles
-            self:spawnRainParticles(dt)
+            local t = apDotAb / abSquared
+            t = math.max(0, math.min(1, t)) -- Clamp t to [0,1]
 
-            -- Update rain particles
-            self:updateRainParticles(dt)
-
-            -- Check if raining animation is done
-            if tank.waterLevel >= targetWaterLevel then
-                state = STATES.QUESTION
-                print("Raining animation done. Transitioning to QUESTION state.")
-            end
+            measuringEndX = startX + t * ABx
+            measuringEndY = startY + t * ABy
         end
 
+    elseif state == STATES.DISPLAY_MEASUREMENTS then
+        -- Handle any updates needed during DISPLAY_MEASUREMENTS state
     elseif state == STATES.QUESTION then
-        -- Update feedback timer
-        if feedbackState then
-            feedbackTimer = feedbackTimer - dt
-            if feedbackTimer <= 0 then
-                feedbackState = nil
-            end
-        end
+        -- No feedbackTimer handling here
+    elseif state == STATES.FEEDBACK then
+        -- Wait for user to proceed
     end
 
-    -- Plane spawning logic
+    -- Update planes
     planeSpawnTimer = planeSpawnTimer + dt
     if planeSpawnTimer >= planeSpawnInterval then
         planeSpawnTimer = planeSpawnTimer - planeSpawnInterval
-        self:spawnPlane()
+        --self:spawnPlane() -- Commented out as planes are optional here
     end
 
-    -- Update plane positions
     for i = #planes, 1, -1 do
         local plane = planes[i]
         plane.x = plane.x + plane.speed * dt
@@ -320,173 +727,17 @@ function level1:update(dt)
             table.remove(planes, i)
         end
     end
-
-    -- Spawn and update raindrops (existing raindrop system)
-    raindropSpawnTimer = raindropSpawnTimer + dt
-    if raindropSpawnTimer >= raindropSpawnInterval then
-        raindropSpawnTimer = raindropSpawnTimer - raindropSpawnInterval
-        self:spawnRaindrop()
-    end
-
-    for i = #raindrops, 1, -1 do
-        local raindrop = raindrops[i]
-        raindrop.y = raindrop.y + raindrop.speed * dt
-
-        if raindrop.y > screenHeight then
-            table.remove(raindrops, i)
-        end
-    end
-
-    -- Update correct answer
-    correctAnswer = math.pi * (tank.radius)^2 * tank.waterLevel
-end
-
--- Function to increase number of clouds during raining
-function level1:increaseClouds(dt)
-    local targetCloudCount = 10 -- Increase to 10 clouds during raining
-    if #clouds < targetCloudCount then
-        -- Add new cloud
-        table.insert(clouds, {
-            x = math.random(0, screenWidth - cloudImage:getWidth()),
-            y = math.random(20, 100), -- Corrected range for higher position
-            speed = math.random(10, 30), -- Varying speeds for realism
-            scale = math.random(50, 100) / 100,
-            direction = math.random() < 0.5 and -1 or 1 -- Random direction: left or right
-        })
-        -- Optional: Print for debugging
-        print("Spawned new cloud at y =", math.random(20, 100))
-    end
-end
-
--- Function to update clouds' positions
-function level1:updateClouds(dt)
-    for _, cloud in ipairs(clouds) do
-        -- Move cloud horizontally based on speed and direction
-        cloud.x = cloud.x + cloud.speed * cloud.direction * dt
-
-        -- Add slight vertical drift
-        local verticalDrift = math.random(-10, 10) * dt -- Adjust drift speed as needed
-        cloud.y = cloud.y + verticalDrift
-
-        -- Clamp y position to stay within [20, 100]
-        cloud.y = math.max(20, math.min(100, cloud.y))
-
-        -- Wrap around the screen
-        if cloud.direction == 1 and cloud.x > screenWidth then
-            cloud.x = -cloudImage:getWidth() * cloud.scale
-            cloud.y = math.random(20, 100) -- Reset Y to add variability
-            -- Optional: Print for debugging
-            print("Cloud wrapped to left with y =", math.random(20, 100))
-        elseif cloud.direction == -1 and cloud.x + cloudImage:getWidth() * cloud.scale < 0 then
-            cloud.x = screenWidth
-            cloud.y = math.random(20, 100) -- Corrected range
-            -- Optional: Print for debugging
-            print("Cloud wrapped to right with y =", math.random(20, 100))
-        end
-    end
-end
-
--- Function to gradually darken the background color
-function level1:updateBackgroundDarkness(dt)
-    for i = 1, 3 do
-        backgroundColor[i] = backgroundColor[i] + ((targetBackgroundColor[i] - backgroundColor[i]) / rainingDuration) * dt
-        -- Clamp values between 0 and 1
-        backgroundColor[i] = math.max(0, math.min(1, backgroundColor[i]))
-    end
-end
-
--- Function to spawn rain particles directed to the tank
-function level1:spawnRainParticles(dt)
-    rainParticleSpawnTimer = rainParticleSpawnTimer + dt
-    if rainParticleSpawnTimer >= rainParticleSpawnInterval then
-        rainParticleSpawnTimer = rainParticleSpawnTimer - rainParticleSpawnInterval
-        -- For each cloud, spawn a particle directed to the tank
-        for _, cloud in ipairs(clouds) do
-            -- Spawn a particle directed to the tank's top center
-            table.insert(rainParticles, {
-                x = cloud.x + (cloudImage:getWidth() * cloud.scale) / 2,
-                y = cloud.y + (cloudImage:getHeight() * cloud.scale),
-                targetX = tank.x + tank.width / 2,
-                targetY = tank.y,
-                speed = 200 + math.random() * 100 -- Adjust speed as needed
-            })
-        end
-    end
-end
-
--- Function to update rain particles moving from clouds to tank
-function level1:updateRainParticles(dt)
-    for i = #rainParticles, 1, -1 do
-        local particle = rainParticles[i]
-
-        -- Calculate direction vector
-        local dx = particle.targetX - particle.x
-        local dy = particle.targetY - particle.y
-        local distance = math.sqrt(dx * dx + dy * dy)
-
-        -- Normalize direction vector
-        local vx, vy
-        if distance > 0 then
-            vx = (dx / distance) * particle.speed * dt
-            vy = (dy / distance) * particle.speed * dt
-        else
-            vx, vy = 0, 0
-        end
-
-        -- Update particle position
-        particle.x = particle.x + vx
-        particle.y = particle.y + vy
-
-        -- Check if particle reached the target
-        if distance < 5 then
-            table.remove(rainParticles, i)
-            -- Increase water level in tank directly
-            if tank.waterLevel < targetWaterLevel then
-                tank.waterLevel = math.min(tank.waterLevel + 1, targetWaterLevel)
-            end
-        end
-    end
-end
-
--- Function to spawn a new raindrop (existing raindrop system)
-function level1:spawnRaindrop()
-    local speed = math.random(raindropSpeedMin, raindropSpeedMax)
-    local scale = math.random(50, 100) / 100
-    local opacity = math.random(60, 100) / 100
-    table.insert(raindrops, {
-        x = math.random(0, screenWidth),
-        y = -10,
-        speed = speed,
-        scale = scale,
-        opacity = opacity
-    })
-end
-
--- Function to spawn a new plane
-function level1:spawnPlane()
-    if #planes >= 3 then return end
-
-    local yPositions = {100, 150, 200}
-    local y = yPositions[math.random(#yPositions)]
-    local scale = math.random(20, 40) / 100
-
-    table.insert(planes, {
-        x = -planeImage:getWidth() * scale,
-        y = y,
-        speed = planeSpeed,
-        scale = scale
-    })
 end
 
 -- Function to draw dialogue on the screen
 function level1:drawDialogue()
-    if state == STATES.DIALOGUE and dialogue[currentDialogue] then
+    if (state == STATES.DIALOGUE or state == STATES.DISPLAY_MEASUREMENTS) and dialogue[currentDialogue] then
         local dialogWidth = 400
         local dialogHeight = 100
 
-        -- Calculate center position
-        local dialogX = (screenWidth - dialogWidth) / 2
-        local dialogY = (screenHeight - dialogHeight) 
+        -- Calculate position at the bottom of the screen
+        local dialogX = (screenWidth - dialogWidth) / 2 - 10
+        local dialogY = screenHeight - dialogHeight - 50
 
         love.graphics.setFont(defaultFont)
         love.graphics.setColor(0, 0, 0, 0.7)
@@ -508,6 +759,36 @@ function level1:drawDialogue()
             dialogWidth - 20,
             "left"
         )
+    elseif state == STATES.LEVEL_COMPLETE then
+        -- Draw the final dialogue box
+        local dialogWidth = 500
+        local dialogHeight = 150
+
+        -- Position at the center of the screen
+        local dialogX = (screenWidth - dialogWidth) / 2 
+        local dialogY = (screenHeight - dialogHeight) / 2
+
+        love.graphics.setFont(titleFont)
+        love.graphics.setColor(0, 0, 0, 0.8)
+
+        love.graphics.rectangle(
+            "fill",
+            dialogX,
+            dialogY,
+            dialogWidth,
+            dialogHeight,
+            15, 15
+        )
+
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.printf(
+            "Congratulations!\nYou've completed Level 2.",
+            dialogX + 20,
+            dialogY + 30,
+            dialogWidth - 40,
+            "center"
+        )
+
     end
     love.graphics.setColor(1, 1, 1) -- Reset color
 end
@@ -518,7 +799,7 @@ function level1:drawCharacters()
         love.graphics.setColor(1, 1, 1) -- Ensure color is reset to white
         love.graphics.draw(
             character2.image,
-            character2.x - 10, -- Slight offset for better positioning
+            character2.x-530,
             character2.y,
             0,
             character2.scale,
@@ -529,157 +810,13 @@ function level1:drawCharacters()
     end
 end
 
--- Function to draw rain particles directed to tank
-function level1:drawRainParticles()
-    love.graphics.setColor(0, 0, 1, 0.7) -- Blue with some transparency
-    for _, particle in ipairs(rainParticles) do
-        love.graphics.circle("fill", particle.x, particle.y, 2)
-    end
-    love.graphics.setColor(1, 1, 1, 1) -- Reset to white
-end
-
--- Function to draw the vertical water bar
-function level1:drawWaterBar()
-    -- Remove the water bar background by commenting out or deleting these lines
-    -- love.graphics.setColor(0.8, 0.8, 0.8) -- Light gray background
-    -- love.graphics.rectangle("fill", waterBar.x, waterBar.y, waterBar.width, waterBar.height, 5, 5)
-
-    -- Draw the filled portion of the water bar using the unified water color
-    love.graphics.setColor(waterColor)
-    local filledHeight = (waterBar.waterLevel / waterBar.maxWater) * waterBar.height
-
-    -- *** Modified the y-coordinate to make the bar fill from top down ***
-    love.graphics.rectangle("fill", waterBar.x, waterBar.y, waterBar.width, filledHeight, 5, 5)
-
-    -- Optionally, add a border around the water bar for better visibility
-
-    -- Reset color
-    love.graphics.setColor(1, 1, 1)
-end
-
--- Function to draw all game elements
-function level1:draw()
-    -- Draw the background
-    love.graphics.clear(backgroundColor[1], backgroundColor[2], backgroundColor[3])
-
-    -- Draw clouds
-    love.graphics.setColor(1, 1, 1)
-    for _, cloud in ipairs(clouds) do
-        love.graphics.draw(cloudImage, cloud.x, cloud.y, 0, cloud.scale, cloud.scale)
-    end
-
-    -- Draw planes
-    for _, plane in ipairs(planes) do
-        love.graphics.draw(
-            bannerImage,
-            plane.x - bannerImage:getWidth() * plane.scale,
-            plane.y,
-            0,
-            plane.scale,
-            plane.scale
-        )
-
-        love.graphics.draw(
-            planeImage,
-            plane.x,
-            plane.y,
-            0,
-            plane.scale,
-            plane.scale,
-            planeImage:getWidth() / 2,
-            planeImage:getHeight() / 2
-        )
-    end
-
-    -- Draw the house image
-    if houseImage then
-        -- Calculate scale factors based on desired width and height
-        local scaleX = house.width / houseImage:getWidth()
-        local scaleY = house.height / houseImage:getHeight()
-
-        love.graphics.setColor(1, 1, 1) -- Ensure the image is drawn with its original colors
-        love.graphics.draw(
-            houseImage,
-            house.x,
-            house.y,
-            0,          -- rotation
-            scaleX,     -- scaleX
-            scaleY,     -- scaleY
-            0,          -- origin offset X
-            0           -- origin offset Y
-        )
-    end
-
-    -- Draw grass
+-- Function to draw grass
+function level1:drawGrass()
     love.graphics.setColor(1, 1, 1)
     for _, grass in ipairs(grasses) do
         local swayOffset = math.sin(time * grass.swaySpeed + grass.swayOffset) * grass.swayAmplitude
         love.graphics.draw(grass.image, grass.x + swayOffset, grass.y, 0, 0.5, 0.5, grass.image:getWidth() / 2, grass.image:getHeight())
     end
-
-    -- Draw the tank
-
-    -- Draw the water level using the unified water color
-    love.graphics.setColor(waterColor)
-    love.graphics.rectangle("fill", tank.x, tank.y + (tank.height - tank.waterLevel), tank.width, tank.waterLevel, 10, 10)
-
-    -- Display tank information
-    love.graphics.setFont(defaultFont)
-    love.graphics.setColor(0, 0, 0)
-    local textX = tank.x + tank.width + 20
-    local textY = tank.y
-    love.graphics.print(string.format("Radius: %.2f units", tank.radius), textX, textY)
-    love.graphics.print(string.format("Height: %d units", tank.height), textX, textY + 25)
-    love.graphics.print(string.format("Water Level: %d units", tank.waterLevel), textX, textY + 50)
-
-    -- Draw the vertical water bar
-    self:drawWaterBar()
-
-    -- Display the question
-    if state == STATES.QUESTION then
-        love.graphics.setFont(questionFont)
-        love.graphics.setColor(0, 0, 0)
-        love.graphics.printf("Question:", 0, 10, screenWidth, "center")
-
-        love.graphics.setFont(defaultFont)
-        love.graphics.printf(question, 0, 40, screenWidth, "center")
-        love.graphics.printf("Your Answer: " .. userAnswer, 0, 80, screenWidth, "center")
-    end
-
-    -- Display the volume equation
-    love.graphics.setFont(defaultFont)
-    love.graphics.setColor(0, 0, 0)
-    love.graphics.print(string.format("Volume = π × (radius)^2 × water level"), textX, textY + 100)
-    love.graphics.print(string.format("Volume = π × (%.2f)^2 × %d", tank.radius, tank.waterLevel), textX, textY + 125)
-    love.graphics.print(string.format("Correct Volume: %.2f units³", correctAnswer), textX, textY + 150)
-
-    -- Display feedback
-    if feedbackState == "correct" then
-        love.graphics.setFont(feedbackFont)
-        love.graphics.setColor(0, 0.6, 0)
-        love.graphics.printf("Correct!", 0, screenHeight / 2, screenWidth, "center")
-    elseif feedbackState == "incorrect" then
-        love.graphics.setFont(feedbackFont)
-        love.graphics.setColor(0.8, 0, 0)
-        love.graphics.printf("Incorrect. Try Again!", 0, screenHeight / 2, screenWidth, "center")
-    end
-
-    -- Draw raindrops (existing raindrop system)
-    love.graphics.setColor(1, 1, 1)
-    for _, raindrop in ipairs(raindrops) do
-        love.graphics.setColor(1, 1, 1, raindrop.opacity)
-        love.graphics.draw(raindropImage, raindrop.x, raindrop.y, 0, raindrop.scale, raindrop.scale)
-    end
-
-    -- Draw rain particles directed to the tank
-    self:drawRainParticles()
-
-    -- Draw Character Two and dialogue
-    self:drawCharacters()
-    self:drawDialogue()
-
-    -- Reset color
-    love.graphics.setColor(1, 1, 1)
 end
 
 -- Function to advance the dialogue sequence
@@ -688,47 +825,152 @@ function level1:advanceDialogue()
     print("Advancing Dialogue:", currentDialogue)
 
     if currentDialogue > #dialogue then
-        state = STATES.MOVING
-        character2.velocityX = 200
-        character2.velocityY = 300
-        print("Dialogue ended. Transitioning to MOVING state.")
+        if dialogueSequence == "initial" then
+            -- Start character exit animation
+            character2.velocityX = 400
+            character2.velocityY = -600
+            state = STATES.MEASURING
+            print("Dialogue ended. Character exiting. Transitioning to MEASURING state.")
+        elseif dialogueSequence == "post_measurement" then
+            -- Proceed to QUESTION state
+            state = STATES.QUESTION
+            self:calculateCorrectAnswer()
+            -- Remove character from screen or have them exit
+            character2.velocityX = 400
+            character2.velocityY = -600
+            dialogueSequence = "finished"
+        elseif dialogueSequence == "final" then
+            -- Proceed to LEVEL_COMPLETE state
+            state = STATES.LEVEL_COMPLETE
+            print("Final dialogue over. Transitioning to LEVEL_COMPLETE state.")
+        end
     else
         state = STATES.DIALOGUE
         print("Continuing Dialogue.")
     end
 end
 
--- Function to handle text input
-function level1:textinput(text)
-    if state == STATES.QUESTION then
-        if text:match("%d") or text == "." then
-            userAnswer = userAnswer .. text
-        end
-    end
-end
-
 -- Function to handle key presses
 function level1:keypressed(key)
+    if calculator:isActive() then
+        calculator:keypressed(key)
+        -- Exit the function if calculator is active
+    end
+
+
     if state == STATES.DIALOGUE then
+        if key == "return" then
+            self:advanceDialogue()
+        end
+    elseif state == STATES.DISPLAY_MEASUREMENTS then
         if key == "return" then
             self:advanceDialogue()
         end
     elseif state == STATES.QUESTION then
         if key == "return" then
-            local numericAnswer = tonumber(userAnswer)
-            if numericAnswer and math.abs(numericAnswer - correctAnswer) < epsilon then
-                feedbackState = "correct"
-                feedbackTimer = feedbackDuration
-                tank.waterLevel = math.min(tank.waterLevel + 20, tank.maxWater)
-            else
-                feedbackState = "incorrect"
-                feedbackTimer = feedbackDuration
-                tank.waterLevel = math.max(tank.waterLevel - 20, 0)
-            end
-            userAnswer = ""
+            self:checkAnswer()
         elseif key == "backspace" then
             userAnswer = string.sub(userAnswer, 1, -2)
         end
+    elseif state == STATES.FEEDBACK then
+        if key == "return" then
+            if feedbackState == "correct" then
+                if correctCount >= maxQuestions then
+                    -- Set up final dialogue before moving to next level
+                    dialogue = {
+                        {
+                            character = "assets/images/character2.png",
+                            text = "Now that we've measured the roof, let's go measure the water. Remember that the volume is the L x W x 1/2",
+                        },
+                    }
+                    currentDialogue = 1
+                    dialogueSequence = "final"
+                    state = STATES.DIALOGUE
+                    print("Starting final dialogue before moving to next level.")
+                else
+                    -- Prepare for the next question
+                    self:setupRoofAndBuilding()
+                    state = STATES.MEASURING
+                    userAnswer = ""
+                    feedbackState = nil
+                    -- Reset dialogue for measuring
+                    dialogue = {
+                        {
+                            character = "assets/images/character2.png",
+                            text = "Great job! Let's try another one."
+                        },
+                        {
+                            character = "assets/images/character2.png",
+                            text = "Measure the sides of the new roof."
+                        },
+                    }
+                    currentDialogue = 1
+                    dialogueSequence = "initial"
+                    character2.x = screenWidth / 2 + 250
+                    character2.y = screenHeight
+                    character2.velocityX = 0
+                    character2.velocityY = 0
+                    state = STATES.DIALOGUE
+                end
+            else
+                -- Reset for incorrect answer
+                self:setupRoofAndBuilding()
+                measurements = {} -- Clear previous measurements
+                userAnswer = ""
+                feedbackState = nil
+                -- Set dialogue for retry
+                dialogue = {
+                    {
+                        character = "assets/images/character2.png",
+                        text = "Not quite right. Let's try measuring the roof again."
+                    },
+                    {
+                        character = "assets/images/character2.png",
+                        text = "Make sure to measure carefully!"
+                    },
+                }
+                currentDialogue = 1
+                dialogueSequence = "initial"
+                character2.x = screenWidth / 2 + 250
+                character2.y = screenHeight
+                character2.velocityX = 0
+                character2.velocityY = 0
+                state = STATES.DIALOGUE
+            end
+        end
+    elseif state == STATES.LEVEL_COMPLETE then
+        if key == "return" or key == "space" then
+            -- Transition to the next level
+            Gamestate.switch(nextLevel)
+            print("Transitioning to the next level.")
+        end
+    elseif key == "escape" then
+        -- Add a fade-out transition
+        local function onComplete()
+            Gamestate.switch(menu)
+        end
+        
+        -- Create a fade transition
+        local transition = {
+            alpha = 0,
+            duration = 0.5,
+            timer = 0,
+            update = function(self, dt)
+                self.timer = self.timer + dt
+                self.alpha = math.min(1, self.timer / self.duration)
+                if self.timer >= self.duration then
+                    onComplete()
+                end
+            end,
+            draw = function(self)
+                love.graphics.setColor(0, 0, 0, self.alpha)
+                love.graphics.rectangle("fill", 0, 0, screenWidth, screenHeight)
+            end
+        }
+        
+        -- Replace the current state with the transition
+        state = "transitioning"
+        self.transition = transition
     end
 
     if key == "escape" then
@@ -736,10 +978,727 @@ function level1:keypressed(key)
     end
 end
 
+-- Function to handle text input
+function level1:textinput(text)
+    if state == STATES.QUESTION then
+        if text:match("[0-9%.]") then
+            userAnswer = userAnswer .. text
+        end
+    end
+end
+
 -- Function to handle mouse presses
 function level1:mousepressed(x, y, button, istouch, presses)
+    if calculatorActive then
+    if calculator:isActive() then
+        calculator:mousepressed(x, y, button, istouch, presses)
+        return
+    end
+        -- Exit the function if calculator is active
+    end
+    if button == 1 then -- Lef t mouse button
+        if isMouseOver(menuButton, x, y) then
+            Gamestate.switch(menu)  -- Switch to the main menu state
+            print("Returning to the main menu.")
+            return -- Exit the function to prevent other interactions
+        
+        elseif isMouseOver(calculatorButton, x, y) then
+             -- Switch to the calculator state
+            calculator:activate() 
+            calculatorActive = true     -- Activate the calculator
+            print("Calculator activated.")
+            return
+            
+        end
+    
+    end
+    
     if state == STATES.DIALOGUE and button == 1 then
         self:advanceDialogue()
+    elseif state == STATES.MEASURING and button == 1 then
+        local clickX, clickY = x, y
+        local threshold = 20
+
+        -- Check if we already measured this path
+        local function isPathMeasured(path)
+            for _, measurement in ipairs(measurements) do
+                if measurement.name == path.name then
+                    return true
+                end
+            end
+            return false
+        end
+
+        for _, path in ipairs(predefinedPaths) do
+            -- Skip if we already measured this path
+            if isPathMeasured(path) then
+                goto continue
+            end
+
+            -- Check if click is near the path (start or end)
+            local distanceToStart = math.sqrt((clickX - path.startX)^2 + (clickY - path.startY)^2)
+            local distanceToEnd = math.sqrt((clickX - path.endX)^2 + (clickY - path.endY)^2)
+            local distanceToSegment = self:pointToSegmentDistance(clickX, clickY, path.startX, path.startY, path.endX, path.endY)
+
+            if distanceToStart <= threshold or distanceToEnd <= threshold or distanceToSegment <= threshold then
+                measuringActive = true
+                measuringPath = path
+                measuringStartX = path.startX
+                measuringStartY = path.startY
+                measuringEndX = path.startX
+                measuringEndY = path.startY
+                measuringDirection = 1
+                break
+            end
+            ::continue::
+        end
+    elseif state == STATES.LEVEL_COMPLETE and button == 1 then
+        -- Transition to the next level on mouse click
+        Gamestate.switch(nextLevel)
+        print("Transitioning to the next level.")
+    end
+end
+
+-- Function to handle mouse releases
+function level1:mousereleased(x, y, button, istouch, presses)
+    if state == STATES.MEASURING and button == 1 then
+        if measuringActive and measuringPath then
+            measuringActive = false
+            -- Set end point to the path's end point (considering direction)
+            if measuringDirection == 1 then
+                measuringEndX = measuringPath.endX
+                measuringEndY = measuringPath.endY
+            else
+                measuringEndX = measuringPath.startX
+                measuringEndY = measuringPath.startY
+            end
+
+            -- Store the measurement including the measuring tape visualization data
+            table.insert(measurements, {
+                name = measuringPath.name,
+                startX = measuringStartX,
+                startY = measuringStartY,
+                endX = measuringEndX,
+                endY = measuringEndY,
+                length = measuringPath.actualLength,  -- Use the actualLength
+                showTape = true
+            })
+
+            measuringPath = nil
+            measuringDirection = nil
+
+            -- Check if measurements are complete
+            if #measurements >= maxMeasurements then
+                -- Append new dialogue
+                table.insert(dialogue, {
+                    character = "assets/images/character2.png",
+                    text = "Now that you have measured the roof, let's calculate the volume. Remember that the volume is  L x W x 1/2."
+                })
+                currentDialogue = #dialogue
+                state = STATES.DIALOGUE
+                dialogueSequence = "post_measurement"
+                -- Bring the character back to the screen
+                character2.x = screenWidth / 2 + 250
+                character2.y = screenHeight
+                character2.velocityX = 0
+                character2.velocityY = 0
+            end
+        end
+    end
+end
+
+-- Function to calculate the correct answer based on measurements
+function level1:calculateCorrectAnswer()
+    -- Example calculation using scaled values
+    local leftSide = roof.height
+    local topSide = roof.width
+    print(correctAnswer)
+    -- Your specific calculation here using the scaled values
+    correctAnswer = leftSide * topSide * 0.5
+    print(correctAnswer) -- Or whatever calculation you need
+    
+    -- Round to 1 decimal place to avoid floating point issues
+    correctAnswer = math.floor(correctAnswer * 10) / 10
+end
+
+-- Function to check the user's answer
+function level1:checkAnswer()
+    if userAnswer == "" then
+        feedbackState = "incorrect"
+        state = STATES.FEEDBACK
+        return
+    end
+
+    local numericAnswer = tonumber(userAnswer)
+    if not numericAnswer then
+        feedbackState = "incorrect"
+        state = STATES.FEEDBACK
+        return
+    end
+
+    local percentageDiff
+    if correctAnswer == 0 then
+        if numericAnswer == 0 then
+            percentageDiff = 0
+        else
+            percentageDiff = math.huge
+        end
+    else
+        percentageDiff = math.abs(numericAnswer - correctAnswer) / correctAnswer * 100
+    end
+
+    if percentageDiff <= 10 then
+        feedbackState = "correct"
+        correctCount = correctCount + 1 -- Increment correct answers
+        print("Correct answer! correctCount is now:", correctCount)
+    else
+        feedbackState = "incorrect"
+        print("Incorrect answer. correctCount remains:", correctCount)
+    end
+
+    if correctCount >= maxQuestions then
+        -- Set up final dialogue before moving to next level
+        dialogue = {
+            {
+                character = "assets/images/character2.png",
+                text = "Now that we've measured the roof, let's go measure the water."
+            },
+        }
+        currentDialogue = 1
+        dialogueSequence = "final"
+        state = STATES.DIALOGUE
+        print("Starting final dialogue before moving to next level.")
+    else
+        state = STATES.FEEDBACK
+        print("State changed to FEEDBACK, feedbackState:", feedbackState)
+    end
+end
+function level1:drawTube()
+    love.graphics.setColor(0.6, 0.6, 0.6) -- Tube color
+    local tubeWidth = 10
+
+    -- Draw horizontal segment (gutter along the roof)
+    local x = tubeSegments[1].startX
+    local y = tubeSegments[1].startY - tubeWidth / 2
+    local width = tubeSegments[1].endX - tubeSegments[1].startX
+    love.graphics.rectangle("fill", x, y, width, tubeWidth)
+
+    -- Draw vertical segment (downspout to the tank)
+    x = tubeSegments[2].startX - tubeWidth / 2
+    y = tubeSegments[2].startY
+    local height = tubeSegments[2].endY - tubeSegments[2].startY - 50 -- Shortened to make room for new segments
+    love.graphics.rectangle("fill", x, y, tubeWidth, height)
+
+    -- Draw horizontal extension
+    local extensionLength = 50
+    love.graphics.rectangle("fill", x, y + height, extensionLength, tubeWidth)
+
+    -- Draw final vertical segment
+    love.graphics.rectangle("fill", x + extensionLength - tubeWidth/2, y + height, tubeWidth, 50)
+
+    -- Reset color
+    love.graphics.setColor(1, 1, 1)
+end
+
+function level1:drawColumns()
+    local numColumns = 4
+    local columnWidth = 30
+    local columnHeight = mainBuilding.height * 1.8
+    local columnSpacing = (mainBuilding.width - (numColumns * columnWidth)) / (numColumns + 1)
+    
+    for i = 1, numColumns do
+        local columnX = mainBuilding.x + columnSpacing * i + (columnWidth * (i - 1))
+        local columnY = mainBuilding.y+5
+        
+        -- Column shadow
+        love.graphics.setColor(0.6, 0.6, 0.6, 0.3)
+        love.graphics.rectangle("fill", columnX + 5, columnY, columnWidth, columnHeight)
+        
+        -- Main column body
+        love.graphics.setColor(1, 1, 1)
+        self:drawTexturedPolygon(columnTexture, "fill",
+            columnX, columnY,
+            columnX + columnWidth, columnY,
+            columnX + columnWidth, columnY + columnHeight,
+            columnX, columnY + columnHeight
+        )
+        
+        -- Column capital
+        love.graphics.setColor(0.9, 0.9, 0.9)
+        love.graphics.rectangle("fill", columnX - 5, columnY, columnWidth + 10, 20)
+        love.graphics.setColor(0.85, 0.85, 0.85)
+        love.graphics.rectangle("fill", columnX - 3, columnY + 20, columnWidth + 6, 5)
+        
+        -- Column base
+        love.graphics.setColor(0.8, 0.8, 0.8)
+        love.graphics.rectangle("fill", columnX - 5, columnY + columnHeight - 25, columnWidth + 10, 25)
+        
+        -- Vertical grooves
+        love.graphics.setColor(0, 0, 0, 0.1)
+        for j = 1, 2 do
+            local grooveX = columnX + (columnWidth * j / 3)
+            love.graphics.rectangle("fill", grooveX, columnY + 25, 2, columnHeight - 50)
+        end
+        
+        -- Column highlights
+        love.graphics.setColor(1, 1, 1, 0.1)
+        love.graphics.rectangle("fill", columnX + 2, columnY + 25, 3, columnHeight - 50)
+    end
+    
+    love.graphics.setColor(1, 1, 1)
+
+end
+
+function level1:drawProgressBar()
+    -- Draw the border
+    love.graphics.setColor(progressBar.borderColor)
+    love.graphics.rectangle("line", progressBar.x, progressBar.y, progressBar.width, progressBar.height, 5, 5)
+    
+    -- Draw the background
+    love.graphics.setColor(progressBar.backgroundColor)
+    love.graphics.rectangle("fill", progressBar.x, progressBar.y, progressBar.width, progressBar.height, 5, 5)
+    
+    -- Calculate fill width based on progress
+    local fillWidth = (correctCount / maxQuestions) * (progressBar.width - 4) -- Subtracting for border
+    
+    -- Draw the filled portion
+    love.graphics.setColor(progressBar.fillColor)
+    love.graphics.rectangle("fill", progressBar.x + 2, progressBar.y + 2, fillWidth, progressBar.height - 4, 3, 3)
+    
+    -- Reset color
+    love.graphics.setColor(1, 1, 1, 1)
+    
+    -- Draw the progress text
+    local progressText = string.format("Progress: %d / %d", correctCount, maxQuestions)
+    love.graphics.setFont(defaultFont)
+    love.graphics.setColor(0, 0, 0, 1) -- Black text shadow
+    love.graphics.printf(progressText, progressBar.x + 2, progressBar.y + (progressBar.height / 2) - 10, progressBar.width, "center")
+    love.graphics.setColor(1, 1, 1, 1) -- White text
+    love.graphics.printf(progressText, progressBar.x, progressBar.y + (progressBar.height / 2) - 12, progressBar.width, "center")
+end
+function level1:drawStairs()
+    -- Parameters for stairs
+    local numSteps = 3                    -- Fixed number of steps
+    local stepHeight = 30                 -- Height of each step
+    local stepWidthMultiplier = 1.05       -- Controls the width difference between steps
+    local baseStepWidth = mainBuilding.width  -- Width of the top step (matches building)
+
+    -- Starting position of the stairs (smallest/top step aligns with building)
+    local startX = mainBuilding.x
+    local startY = mainBuilding.y + mainBuilding.height-50   -- Adjust position closer to the bottom
+
+    -- Draw each step from top to bottom
+    for i = 1, numSteps do
+        local currentStepWidth = baseStepWidth * (stepWidthMultiplier ^ (i - 1))
+        local stepX = startX - (currentStepWidth - baseStepWidth) / 2
+        local stepY = startY + (i - 1) * stepHeight
+        
+        -- Draw the step with texture
+        love.graphics.setColor(1, 1, 1, 1)
+        self:drawTexturedPolygon(wallTexture, "fill",
+            stepX, stepY,                           -- Top-left
+            stepX + currentStepWidth, stepY,        -- Top-right
+            stepX + currentStepWidth, stepY + stepHeight, -- Bottom-right
+            stepX, stepY + stepHeight               -- Bottom-left
+        )
+        
+        -- Draw subtle edge lines
+        love.graphics.setColor(0, 0, 0, 0.3)
+        love.graphics.setLineWidth(1)
+        love.graphics.line(
+            stepX, stepY,
+            stepX + currentStepWidth, stepY
+        )
+    end
+
+    -- Reset color and line width
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.setLineWidth(1)
+end
+function level1:drawWindows()
+    local windowWidth = 30
+    local windowHeight = 60
+    local numWindows = 3
+    local spacing = (mainBuilding.width - numWindows * windowWidth) / (numWindows + 1)
+    local wy = mainBuilding.y + 60
+
+    for i = 1, numWindows do
+        local wx = mainBuilding.x + spacing * i + windowWidth * (i - 1)
+        
+        -- Draw window frame
+        love.graphics.setColor(0.2, 0.2, 0.2) -- Dark gray frame
+        love.graphics.rectangle("fill", wx - 2, wy - 2, windowWidth + 4, windowHeight + 4)
+        
+        -- Draw window glass with higher transparency and more saturated blue tint
+        love.graphics.setColor(0.7, 0.85, 1.0, 0.4) -- Increase blue component and alpha
+        love.graphics.rectangle("fill", wx, wy, windowWidth, windowHeight)
+
+        -- Draw window panes with darker color for better visibility
+        love.graphics.setColor(0.1, 0.1, 0.1, 0.7) -- Darker and more opaque panes
+        love.graphics.setLineWidth(2) -- Make panes thicker
+        -- Vertical pane
+        love.graphics.line(wx + windowWidth / 2, wy, wx + windowWidth / 2, wy + windowHeight)
+        -- Horizontal pane
+        love.graphics.line(wx, wy + windowHeight / 2, wx + windowWidth, wy + windowHeight / 2)
+        love.graphics.setLineWidth(1) -- Reset line width
+    end
+    
+    -- Reset color
+    love.graphics.setColor(1, 1, 1)
+end
+
+
+-- Function to draw all game elements
+function level1:draw()
+    -- Fixed visual dimensions
+    local visualWidth = 600
+    local visualBaseLength = 400
+    local visualBaseWidth = 150
+    local visualHeight = 140
+
+    -- Clear the screen with the background color
+    love.graphics.clear(0.529, 0.808, 0.980)
+
+    -- Draw the progress bar
+    self:drawProgressBar()
+
+    -- Draw other elements
+    self:drawSchool()
+    self:drawWindows()
+    self:drawColumns()
+    self:drawStairs()
+
+    -- Use visual dimensions for roof
+    local roofWidth = roof.visualWidth      -- Use visual width
+    local roofHeight = roof.visualHeight    -- Use visual height
+    local roofX = mainBuilding.x
+    local roofY = mainBuilding.y
+
+    love.graphics.setColor(0.8, 0.8, 0.8)
+    self:drawTexturedPolygon(wallTexture, "fill",
+        roofX + roofWidth + 3, roofY,                                   -- Top-left corner
+        roofX + roofWidth + roofOffset, roofY - roofHeight,             -- Top-right corner
+        roofX + roofWidth + roofOffset, mainBuilding.y + mainBuilding.height, -- Bottom-right corner
+        roofX + roofWidth, mainBuilding.y + mainBuilding.height         -- Bottom-left corner
+    )
+
+    -- --- DRAW EXTENSION WALL ---
+    local shiftRight = 40
+    local fixedShapeHeight = 116           -- Fixed value for shape height
+    local fixedVerticalAdjustment = 24     -- Fixed value for vertical adjustment
+
+    love.graphics.setColor(0.8, 0.8, 0.8)  -- Slightly darker wall color for extension
+
+    love.graphics.push()
+        love.graphics.translate(
+            mainBuilding.x + roof.visualWidth + roofOffset + shiftRight,  -- Fixed horizontal position
+            mainBuilding.y - roof.visualHeight + fixedVerticalAdjustment + 150  -- Fixed vertical position
+        )
+        love.graphics.scale(-1, 1)  -- Mirror the extension wall if needed
+        self:drawTexturedPolygon(wallTexture, "fill",
+            0, 0,                                    -- Top-left corner (pivot point)
+            roofOffset, -roof.visualHeight,          -- Top-right corner
+            roofOffset, fixedShapeHeight,            -- Bottom-right corner
+            0, fixedShapeHeight                      -- Bottom-left corner
+        )
+    love.graphics.pop()
+
+    -- Draw the tube
+    self:drawTube()
+
+    -- Draw the tank image
+    if tank.image then
+        love.graphics.setColor(1, 1, 1)
+        local scale = tank.width / tank.image:getWidth()
+        love.graphics.draw(
+            tank.image,
+            tank.x + 150,
+            tank.y + 50,
+            0,
+            scale,
+            scale,
+            tank.image:getWidth() / 2,
+            tank.image:getHeight()
+        )
+    else
+        print("Tank image not loaded.")
+    end
+
+    -- Draw grass
+    self:drawGrass()
+
+    -- Draw characters and dialogue
+    self:drawDialogue()
+    self:drawCharacters()
+    
+
+    -- Draw the calculator and menu buttons
+    self:drawCalculatorButton()
+    self:drawMenuButton()
+
+    -- Draw measuring tape if in appropriate state
+    if state == STATES.MEASURING or state == STATES.DISPLAY_MEASUREMENTS or
+       (state == STATES.DIALOGUE and dialogueSequence == "post_measurement") or state == STATES.QUESTION then
+
+        love.graphics.setFont(defaultFont)
+        love.graphics.setColor(0, 0, 0)
+        if state == STATES.MEASURING then
+            love.graphics.print("Measure the sides of the roof by dragging along the highlighted edges.", 50, 50)
+        end
+
+        -- Draw the predefined paths as dashed lines
+        love.graphics.setColor(0, 0, 1)
+        for _, path in ipairs(predefinedPaths) do
+            self:drawDashedLine(path.startX, path.startY, path.endX, path.endY, 5, 5)
+        end
+
+        -- Draw markers at both ends of the measuring paths
+        love.graphics.setColor(0, 1, 0)
+        for _, path in ipairs(predefinedPaths) do
+            love.graphics.circle("fill", path.startX, path.startY, 5)
+            love.graphics.circle("fill", path.endX, path.endY, 5)
+        end
+
+        -- Draw the current measuring tape if active
+        if measuringActive and measuringPath then
+            self:drawMeasuringTape(
+                measuringStartX,
+                measuringStartY,
+                measuringEndX,
+                measuringEndY,
+                measuringPath.actualLength  -- Pass the actualLength here
+            )
+        end
+
+        -- Draw any completed measurements with their tapes and labels
+        if #measurements > 0 then
+            for _, measurement in ipairs(measurements) do
+                -- Draw the measuring tape for completed measurements
+                self:drawMeasuringTape(
+                    measurement.startX,
+                    measurement.startY,
+                    measurement.endX,
+                    measurement.endY,
+                    measurement.length  -- Pass the actualLength here
+                )
+            end
+        end
+
+        love.graphics.setColor(1, 1, 1) -- Reset color
+    end
+
+    -- After displaying measurements, show volume calculation prompt
+    if state == STATES.QUESTION then
+        -- Draw a fancy question box with shadow
+        local boxWidth = screenWidth * 0.5
+        local boxHeight = 160
+        local boxX = (screenWidth - boxWidth) / 3 + 50
+        local boxY = 300
+
+        -- Draw shadow
+        love.graphics.setColor(0, 0, 0, 0.2)
+        love.graphics.rectangle("fill", boxX + 5, boxY + 5, boxWidth, boxHeight, 15, 15)
+
+        -- Draw main box with water-themed gradient
+        local gradient = {
+            {0.000, 0.749, 1.000, 0.9},
+            {0.000, 0.549, 0.800, 0.9}
+        }
+        for i = 0, boxHeight do
+            local t = i / boxHeight
+            local color = {
+                gradient[1][1] * (1 - t) + gradient[2][1] * t,
+                gradient[1][2] * (1 - t) + gradient[2][2] * t,
+                gradient[1][3] * (1 - t) + gradient[2][3] * t,
+                gradient[1][4]
+            }
+            love.graphics.setColor(unpack(color))
+            love.graphics.rectangle("fill", boxX, boxY + i, boxWidth, 1, 15, 15)
+        end
+
+        -- Draw water droplet decorations
+        love.graphics.setColor(1, 1, 1, 0.4)
+        local time = love.timer.getTime()
+        for i = 1, 3 do
+            local dropX = boxX + 30 + (i * 50)
+            local dropY = boxY + 15 + math.sin(time * 2 + i) * 5
+            self:drawWaterDrop(dropX, dropY, 12)
+        end
+
+        -- Draw ripple effect border
+        love.graphics.setColor(1, 1, 1, 0.8)
+        love.graphics.setLineWidth(3)
+        local rippleOffset = math.sin(time * 2) * 2
+        love.graphics.rectangle("line", boxX, boxY + rippleOffset, boxWidth, boxHeight, 15, 15)
+
+        -- Draw question text with shadow
+        love.graphics.setFont(questionFont)
+        love.graphics.setColor(0, 0, 0, 0.5)
+        love.graphics.printf("Calculate:", boxX + 2, boxY + 22, boxWidth, "center")
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.printf("Calculate:", boxX, boxY + 20, boxWidth, "center")
+
+        -- Draw main question text
+        love.graphics.setFont(defaultFont)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.printf(question, boxX + 20, boxY + 60, boxWidth - 40, "center")
+
+        -- Draw answer box with wave effect
+        local waveOffset = math.sin(time * 3) * 2
+        love.graphics.setColor(0.000, 0.749, 1.000, 0.3)
+        love.graphics.rectangle("fill", boxX + 100, boxY + 100 + waveOffset, boxWidth - 200, 30, 8, 8)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.printf("Your Answer: " .. userAnswer, boxX + 100, boxY + 108 + waveOffset, boxWidth - 200, "center")
+    end
+
+    -- Draw feedback during FEEDBACK state
+    if state == STATES.FEEDBACK then
+        -- Draw feedback background
+        love.graphics.setColor(0, 0, 0, 0.7)
+        love.graphics.rectangle("fill", screenWidth / 4, screenHeight / 2 - 50, screenWidth / 2, 100, 10, 10)
+
+        if feedbackState == "correct" then
+            love.graphics.setFont(feedbackFont)
+            love.graphics.setColor(0, 1, 0, 1)
+            love.graphics.printf("Correct!", 0, screenHeight / 2 - 20, screenWidth, "center")
+        elseif feedbackState == "incorrect" then
+            love.graphics.setFont(feedbackFont)
+            love.graphics.setColor(1, 0, 0, 1)
+            love.graphics.printf("Incorrect. Try Again!", 0, screenHeight / 2 - 20, screenWidth, "center")
+        end
+
+        -- Draw continue prompt
+        love.graphics.setFont(defaultFont)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.printf("Press Enter to continue", 0, screenHeight / 2 + 20, screenWidth, "center")
+    end
+
+    -- Reset color and line width
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.setLineWidth(1)
+
+    -- Draw the calculator if it's active
+    if calculator then
+        calculator:draw()
+    end
+end
+
+
+function level1:drawMeasuringTape(startX, startY, endX, endY, displayedDistance)
+    -- Calculate the angle between the start and end points
+    local angle = math.atan2(endY - startY, endX - startX)
+
+    -- Calculate the distance between the start and end points
+    local distance = math.sqrt((endX - startX)^2 + (endY - startY)^2)
+
+    -- Set the color for the measuring tape
+    love.graphics.setColor(1, 1, 0) -- Yellow color
+
+    -- Set the width of the measuring tape
+    local tapeWidth = 10
+
+    -- Save the current coordinate system
+    love.graphics.push()
+
+    -- Move the coordinate system to the start point
+    love.graphics.translate(startX, startY)
+
+    -- Rotate the coordinate system to align with the measuring path
+    love.graphics.rotate(angle)
+
+    -- Draw the measuring tape as a rectangle
+    love.graphics.rectangle("fill", 0, -tapeWidth / 2, distance, tapeWidth)
+
+    -- Draw tick marks on the measuring tape
+    local tickSpacing = 20
+    love.graphics.setColor(0, 0, 0)
+    for i = 0, distance, tickSpacing do
+        love.graphics.rectangle("fill", i, -tapeWidth / 2, 2, tapeWidth)
+    end
+
+    -- Restore the original coordinate system
+    love.graphics.pop()
+
+    -- Calculate position for label above the measuring tape
+    local midX = (startX + endX) / 2
+    local midY = (startY + endY) / 2
+    local labelOffset = 30 -- Distance above the tape
+
+    -- Calculate the perpendicular offset for the label
+    local labelX = midX - (labelOffset * math.sin(angle))
+    local labelY = midY - (labelOffset * math.cos(angle))
+
+    -- Draw background for the label
+    love.graphics.setColor(0, 0, 0, 0.7)
+    love.graphics.rectangle("fill", labelX - 40, labelY - 15, 80, 30, 5, 5)
+
+    -- Draw the measurement text using displayedDistance
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf(
+        string.format("%.2f units", displayedDistance),
+        labelX - 40,
+        labelY - 10,
+        80,
+        "center"
+    )
+
+    -- Reset color
+    love.graphics.setColor(1, 1, 1)
+end
+function level1:drawMenuButton()
+    love.graphics.setColor(0.2, 0.2, 0.8, 0.5)
+    love.graphics.rectangle("fill", menuButton.x, menuButton.y, menuButton.width, menuButton.height, 5, 5)
+
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setLineWidth(2)
+    love.graphics.rectangle("line", menuButton.x, menuButton.y, menuButton.width, menuButton.height, 5, 5)
+
+    love.graphics.setFont(menuButtonFont or defaultFont)
+    love.graphics.printf(
+        menuButton.text,
+        menuButton.x,
+        menuButton.y + (menuButton.height / 2) - ((menuButtonFont or defaultFont):getHeight() / 2),
+        menuButton.width,
+        "center"
+    )
+end
+
+function level1:drawCalculatorButton()
+    love.graphics.setColor(0.2, 0.2, 0.8, 0.5)
+    love.graphics.rectangle("fill", calculatorButton.x, calculatorButton.y, calculatorButton.width, calculatorButton.height, 5, 5)
+
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setLineWidth(2)
+    love.graphics.rectangle("line", calculatorButton.x, calculatorButton.y, calculatorButton.width, calculatorButton.height, 5, 5)
+
+    love.graphics.setFont(menuButtonFont or defaultFont)
+    love.graphics.printf(
+        calculatorButton.text,
+        calculatorButton.x,
+        calculatorButton.y + (calculatorButton.height / 2) - ((menuButtonFont or defaultFont):getHeight() / 2),
+        calculatorButton.width,
+        "center"
+    )
+end
+
+function level1:drawDashedLine(x1, y1, x2, y2, dashLength, gapLength)
+    dashLength = dashLength or 5
+    gapLength = gapLength or 5
+
+    local dx = x2 - x1
+    local dy = y2 - y1
+    local lineLength = math.sqrt(dx * dx + dy * dy)
+    local angle = math.atan2(dy, dx)
+    local cosAngle = math.cos(angle)
+    local sinAngle = math.sin(angle)
+
+    local numDashes = math.floor(lineLength / (dashLength + gapLength))
+    for i = 0, numDashes - 1 do
+        local startX = x1 + (i * (dashLength + gapLength)) * cosAngle
+        local startY = y1 + (i * (dashLength + gapLength)) * sinAngle
+        local endX = startX + dashLength * cosAngle
+        local endY = startY + dashLength * sinAngle
+        love.graphics.line(startX, startY, endX, endY)
     end
 end
 
