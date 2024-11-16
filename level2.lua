@@ -72,6 +72,9 @@ local tank = {
     maxWater = 200,
     image = nil -- Placeholder for the tank image
 }
+function level2:toWorldCoords(x, y)
+    return (x - offsetX) / scale, (y - offsetY) / scale
+end
 
 -- Derived tank properties
 tank.radius = 2  -- Using radius 2 means area is 12 units (3 * 2 * 2)
@@ -185,7 +188,6 @@ end
 -- Function called when entering Level 1
 function level2:enter()
     print("Entering Level 1")
-
     -- Load fonts and other assets with error handling
     local success, err = pcall(function()
         defaultFont = love.graphics.newFont("assets/fonts/OpenSans-Regular.ttf", 18)
@@ -222,6 +224,11 @@ function level2:enter()
         calculator:init()
         calculator:setPosition(screenWidth - 400, 100)  -- Set position but don't activate
         calculator:deactivate()
+        self:updateScale()
+        
+        
+        
+        
 
     end)
 
@@ -268,7 +275,7 @@ function level2:enter()
         },
         {
             character = "assets/images/character2.png",
-            text = "Measure the tank first, then calculate the volume of the tank when it is full!"
+            text = "Measure the tank first, then calculate the volume of the tank when it is full! Keep in mind the radius is 2."
         }
         -- Additional dialogue entries can be added here
     }
@@ -323,7 +330,10 @@ function level2:enter()
     -- Adjust Character Two's velocity for faster movement
     character2.velocityX = 400 -- Increased from 200 to 400
     character2.velocityY = 600 -- Increased from 300 to 600
+    self:updateScale()
+    
 end
+
 
 -- Function called when leaving Level 1
 function level2:leave()
@@ -339,9 +349,20 @@ function level2:leave()
     
     -- [Clean up other resources if necessary]...
 end
+function level2:updateScale()
+    local windowWidth, windowHeight = love.graphics.getDimensions()
+    local scaleX = windowWidth / screenWidth
+    local scaleY = windowHeight / screenHeight
+    scale = math.min(scaleX, scaleY)
+    
+    -- Calculate offset to center the content
+    offsetX = (windowWidth - (screenWidth * scale)) / 2
+    offsetY = (windowHeight - (screenHeight * scale)) / 2
+end
 
--- Function to update game logic each frame
--- Function to update game logic each frame
+function level2:resize(w, h)
+    self:updateScale()
+end
 function level2:update(dt)
     -- Update time for smooth sway animation
     time = time + dt
@@ -368,12 +389,12 @@ function level2:update(dt)
     if state == STATES.DIALOGUE then
         return -- Skip other updates during dialogue
     elseif state == STATES.MOVING then
-        -- Update Character Two's position
-        character2.x = character2.x + character2.velocityX * dt
+        -- Update Character Two's position with negative velocity for leftward movement
+        character2.x = character2.x - character2.velocityX * dt  -- Changed to minus
         character2.y = character2.y + character2.velocityY * dt
 
-        -- Check if Character Two is off-screen
-        if character2.image and (character2.x > screenWidth + character2.image:getWidth() or 
+        -- Check if Character Two is off-screen to the left
+        if character2.image and (character2.x < -character2.image:getWidth() or  -- Changed condition
            character2.y > screenHeight + character2.image:getHeight()) then
             state = STATES.CLOUDS
             cloudSpawnTimer = 0
@@ -997,11 +1018,14 @@ end
 -- Function to draw all game elements
 function level2:draw()
     love.graphics.clear(0.529, 0.808, 0.980)
-    -- Draw the school building
     
+    -- Draw the school building
+    love.graphics.push()
     -- Clear the screen with the background color
     love.graphics.clear(backgroundColor[1], backgroundColor[2], backgroundColor[3])
-    
+    love.graphics.translate(offsetX, offsetY)
+    love.graphics.scale(scale, scale)
+
     -- Draw correct answer display if it exists
     if level2.correctAnswerDisplay and level2.displayTimer > 0 then
         love.graphics.setFont(defaultFont)
@@ -1272,6 +1296,8 @@ function level2:draw()
 
     love.graphics.setColor(1, 1, 1)
     self:drawMeasuringTape()
+    self:updateScale()
+    love.graphics.pop()
 end
 
 -- Function to advance the dialogue sequence
@@ -1310,6 +1336,8 @@ end
 local answerProcessed = false
 
 function level2:keypressed(key)
+    if key == "f" then love.graphics.toggleFullscreen() end
+
     if calculator:isActive() then
         calculator:keypressed(key)
         return
@@ -1460,7 +1488,8 @@ end
     if key == "escape" then
         Gamestate.switch(menu)
     end
-
+    self:updateScale()
+    love.window.setFullscreen(true, "desktop")
 end
 
 
@@ -1700,6 +1729,7 @@ function level2:mousepressed(x, y, button, istouch, presses)
         calculator:mousepressed(x, y, button, istouch, presses)
         return
     end
+    x, y = self:toWorldCoords(x, y)
 
     -- Handle left mouse button clicks
     if button == 1 then
