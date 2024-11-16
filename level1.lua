@@ -2,14 +2,10 @@ local level1 = {}
 local calculator = require "calculator"
 local Gamestate = require "gamestate"
 local menu = require "menu"
-  -- Assuming your menu state is in menu.l\ua
-
-
-
--- Require Gamestate for state management
+-- Assuming your menu state is in menu.lua
 
 local calculatorActive = false
- 
+
 -- Define possible game states
 local STATES = {
     DIALOGUE = "dialogue",
@@ -18,11 +14,9 @@ local STATES = {
     CLOUDS = "clouds",
     RAINING = "raining",
     QUESTION = "question",
-
     GAMEPLAY = "gameplay",
     DISPLAY_MEASUREMENTS = "display_measurements",
     FEEDBACK = "feedback",
-    --CALCULATOR = "calculator",
     LEVEL_COMPLETE = "level_complete"  -- Added new state
 }
 
@@ -86,7 +80,7 @@ local raindropSpawnTimer = 0
 local maxRaindrops = 1000
 
 -- Question and user input
-local question = "Based on the measurements, calculate the volume of the roof."
+local question = "Based on the measurements, calculate the area of the roof."
 local correctAnswer = 0
 local userAnswer = ""
 
@@ -96,9 +90,29 @@ local epsilon = 0.1
 -- Time-based variable for smooth animation
 local time = 0
 
--- Screen dimensions
-local screenWidth = 800
-local screenHeight = 600
+-- Screen dimensions and scaling variables
+local baseWidth = 800
+local baseHeight = 600
+local scale = 1
+local offsetX = 0
+local offsetY = 0
+
+-- Store initial screen dimensions as base
+function level1:updateScale()
+    local windowWidth, windowHeight = love.graphics.getDimensions()
+    local scaleX = windowWidth / baseWidth
+    local scaleY = windowHeight / baseHeight
+    scale = math.min(scaleX, scaleY)
+    
+    -- Calculate offset to center the content
+    offsetX = (windowWidth - (baseWidth * scale)) / 2
+    offsetY = (windowHeight - (baseHeight * scale)) / 2
+end
+
+-- Function to convert screen coordinates to world coordinates
+function level1:toWorldCoords(x, y)
+    return (x - offsetX) / scale, (y - offsetY) / scale
+end
 
 -- Font settings
 local defaultFont
@@ -125,8 +139,8 @@ local dialogueSequence = "initial"
 -- Character definitions
 local character2 = {
     image = nil,
-    x = screenWidth / 2 + 270,
-    y = screenHeight,
+    x = baseWidth / 2 + 270,
+    y = baseHeight,
     scale = 0.5,
     velocityX = 0,
     velocityY = 0
@@ -171,7 +185,7 @@ local completedMeasurements = {}
 local progressBar = {
     x = 50, -- Starting X position
     y = 20, -- Starting Y position (from the top)
-    width = screenWidth - 100, -- Width of the progress bar
+    width = baseWidth - 100, -- Width of the progress bar
     height = 20, -- Height of the progress bar
     borderColor = {0, 0, 0, 1}, -- Black border
     backgroundColor = {0.7, 0.7, 0.7, 1}, -- Grey background
@@ -180,12 +194,11 @@ local progressBar = {
 }
 local calculatorButton = {
     x = 90,
-    y = 560,
+    y = 850,
     width = 60,
     height = 40,
     text = "CALC"
 }
-
 
 -- Optional: Initialize a displayedProgress variable for smooth animation
 local displayedProgress = 0
@@ -206,9 +219,11 @@ function level1:drawWaterDrop(x, y, size)
 end
 
 -- Assuming you have a next level defined
-local nextLevel = require("level2") -- Replace "level3" with your actual next level script
-
--- Function called when entering Level 2
+local nextLevel = require("level2") 
+function level1:resize(w, h)
+    self:updateScale()
+end
+-- Function called when entering Level 1
 function level1:enter()
     print("Entering Level 1")
 
@@ -240,7 +255,7 @@ function level1:enter()
         -- Load Character Two's image
         character2.image = love.graphics.newImage("assets/images/character2.png")
         calculator:init()
-        calculator:setPosition(screenWidth - 400, 100)  -- Set position but don't activate
+        calculator:setPosition(baseWidth - 400, 100)  -- Set position but don't activate
         calculator:deactivate()  -- Ensure calculator starts deactivated
 
         -- Load tank image
@@ -256,6 +271,7 @@ function level1:enter()
         rainSound:setLooping(true)
         rainSound:setVolume(0.5)
         kenyanFlagImage = love.graphics.newImage("assets/images/flag_of_kenya.png")
+        self:updateScale()
 
     end)
 
@@ -270,7 +286,7 @@ function level1:enter()
     for i = 1, 8 do
         table.insert(grasses, {
             x = i * 100,
-            y = screenHeight + 40,
+            y = baseHeight + 40,
             image = grassImages[1],
             swayOffset = math.random(0, 2 * math.pi),
             swayAmplitude = math.random(2, 4),
@@ -292,7 +308,7 @@ function level1:enter()
         },
         {
             character = "assets/images/character2.png",
-            text = "Today, we need your help to calculate the volume of water collected."
+            text = "Today, we need your help to calculate the area of the roof."
         },
         {
             character = "assets/images/character2.png",
@@ -314,9 +330,19 @@ function level1:enter()
     -- Initialize correct count
     correctCount = 0 -- Reset correctCount on entering the level
 
+    -- Initialize scale based on the current window size
+    self:updateScale()
+
     -- Setup initial roof and building
     self:setupRoofAndBuilding()
+    love.window.setFullscreen(true, "desktop")
 end
+
+-- Handle window resizing
+function level1:resize(w, h)
+    self:updateScale()
+end
+
 local function isMouseOver(button, mx, my)
     return mx >= button.x and mx <= button.x + button.width and
            my >= button.y and my <= button.y + button.height
@@ -631,9 +657,9 @@ function level1:drawTexturedPolygon(texture, mode, ...)
     mesh:release()
 end
 
--- Function called when leaving Level 2
+-- Function called when leaving Level 1
 function level1:leave()
-    print("Leaving Level 2")
+    print("Leaving Level 1")
     -- Clean up resources if necessary
     if rainSound then
         love.audio.stop(rainSound)
@@ -651,7 +677,6 @@ function level1:update(dt)
         if calculator then
             calculator:update(dt)
         end
-  
     end
     if state == STATES.DIALOGUE then
         -- During dialogue, skip other updates
@@ -662,8 +687,8 @@ function level1:update(dt)
         character2.y = character2.y + character2.velocityY * dt
 
         -- Check if Character Two is off-screen
-        if character2.image and (character2.x > screenWidth + character2.image:getWidth() or
-           character2.y > screenHeight + character2.image:getHeight()) then
+        if character2.image and (character2.x > baseWidth + character2.image:getWidth() or
+           character2.y > baseHeight + character2.image:getHeight()) then
             state = STATES.CLOUDS -- Transition to CLOUDS state
             print("Character Two moved off-screen. Transitioning to CLOUDS state.")
 
@@ -677,6 +702,7 @@ function level1:update(dt)
     elseif state == STATES.MEASURING then
         if measuringActive and measuringPath then
             local mouseX, mouseY = love.mouse.getPosition()
+            mouseX, mouseY = self:toWorldCoords(mouseX, mouseY)
             -- Project mouse position onto the path
             local startX = measuringStartX
             local startY = measuringStartY
@@ -723,7 +749,7 @@ function level1:update(dt)
         local plane = planes[i]
         plane.x = plane.x + plane.speed * dt
 
-        if plane.x > screenWidth + planeImage:getWidth() then
+        if plane.x > baseWidth + planeImage:getWidth() then
             table.remove(planes, i)
         end
     end
@@ -736,8 +762,8 @@ function level1:drawDialogue()
         local dialogHeight = 100
 
         -- Calculate position at the bottom of the screen
-        local dialogX = (screenWidth - dialogWidth) / 2 - 10
-        local dialogY = screenHeight - dialogHeight - 50
+        local dialogX = (baseWidth - dialogWidth) / 2 - 10
+        local dialogY = baseHeight - dialogHeight - 50
 
         love.graphics.setFont(defaultFont)
         love.graphics.setColor(0, 0, 0, 0.7)
@@ -765,8 +791,8 @@ function level1:drawDialogue()
         local dialogHeight = 150
 
         -- Position at the center of the screen
-        local dialogX = (screenWidth - dialogWidth) / 2 
-        local dialogY = (screenHeight - dialogHeight) / 2
+        local dialogX = (baseWidth - dialogWidth) / 2 
+        local dialogY = (baseHeight - dialogHeight) / 2
 
         love.graphics.setFont(titleFont)
         love.graphics.setColor(0, 0, 0, 0.8)
@@ -782,7 +808,7 @@ function level1:drawDialogue()
 
         love.graphics.setColor(1, 1, 1)
         love.graphics.printf(
-            "Congratulations!\nYou've completed Level 2.",
+            "Congratulations!\nYou've completed Level 1.",
             dialogX + 20,
             dialogY + 30,
             dialogWidth - 40,
@@ -799,7 +825,7 @@ function level1:drawCharacters()
         love.graphics.setColor(1, 1, 1) -- Ensure color is reset to white
         love.graphics.draw(
             character2.image,
-            character2.x-530,
+            character2.x - 530,
             character2.y,
             0,
             character2.scale,
@@ -857,7 +883,6 @@ function level1:keypressed(key)
         -- Exit the function if calculator is active
     end
 
-
     if state == STATES.DIALOGUE then
         if key == "return" then
             self:advanceDialogue()
@@ -880,7 +905,7 @@ function level1:keypressed(key)
                     dialogue = {
                         {
                             character = "assets/images/character2.png",
-                            text = "Now that we've measured the roof, let's go measure the water. Remember that the volume is the L x W x 1/2",
+                            text = "Now that we've measured the roof, let's go measure the water. Remember that the volume is L x W x H."
                         },
                     }
                     currentDialogue = 1
@@ -906,8 +931,8 @@ function level1:keypressed(key)
                     }
                     currentDialogue = 1
                     dialogueSequence = "initial"
-                    character2.x = screenWidth / 2 + 250
-                    character2.y = screenHeight
+                    character2.x = baseWidth / 2 + 250
+                    character2.y = baseHeight
                     character2.velocityX = 0
                     character2.velocityY = 0
                     state = STATES.DIALOGUE
@@ -931,8 +956,8 @@ function level1:keypressed(key)
                 }
                 currentDialogue = 1
                 dialogueSequence = "initial"
-                character2.x = screenWidth / 2 + 250
-                character2.y = screenHeight
+                character2.x = baseWidth / 2 + 250
+                character2.y = baseHeight
                 character2.velocityX = 0
                 character2.velocityY = 0
                 state = STATES.DIALOGUE
@@ -964,7 +989,7 @@ function level1:keypressed(key)
             end,
             draw = function(self)
                 love.graphics.setColor(0, 0, 0, self.alpha)
-                love.graphics.rectangle("fill", 0, 0, screenWidth, screenHeight)
+                love.graphics.rectangle("fill", 0, 0, baseWidth, baseHeight)
             end
         }
         
@@ -990,29 +1015,27 @@ end
 -- Function to handle mouse presses
 function level1:mousepressed(x, y, button, istouch, presses)
     if calculatorActive then
-    if calculator:isActive() then
-        calculator:mousepressed(x, y, button, istouch, presses)
-        return
+        if calculator:isActive() then
+            calculator:mousepressed(x, y, button, istouch, presses)
+            return
+        end
     end
-        -- Exit the function if calculator is active
-    end
-    if button == 1 then -- Lef t mouse button
+    if button == 1 then -- Left mouse button
         if isMouseOver(menuButton, x, y) then
             Gamestate.switch(menu)  -- Switch to the main menu state
             print("Returning to the main menu.")
             return -- Exit the function to prevent other interactions
-        
         elseif isMouseOver(calculatorButton, x, y) then
-             -- Switch to the calculator state
+            -- Switch to the calculator state
             calculator:activate() 
             calculatorActive = true     -- Activate the calculator
             print("Calculator activated.")
             return
-            
         end
-    
     end
-    
+
+    x, y = self:toWorldCoords(x, y)
+
     if state == STATES.DIALOGUE and button == 1 then
         self:advanceDialogue()
     elseif state == STATES.MEASURING and button == 1 then
@@ -1061,6 +1084,7 @@ end
 
 -- Function to handle mouse releases
 function level1:mousereleased(x, y, button, istouch, presses)
+    x, y = self:toWorldCoords(x, y)
     if state == STATES.MEASURING and button == 1 then
         if measuringActive and measuringPath then
             measuringActive = false
@@ -1092,14 +1116,14 @@ function level1:mousereleased(x, y, button, istouch, presses)
                 -- Append new dialogue
                 table.insert(dialogue, {
                     character = "assets/images/character2.png",
-                    text = "Now that you have measured the roof, let's calculate the volume. Remember that the volume is  L x W x 1/2."
+                    text = "Now that you have measured the roof, let's calculate the area. Remember that the area is L x W."
                 })
                 currentDialogue = #dialogue
                 state = STATES.DIALOGUE
                 dialogueSequence = "post_measurement"
                 -- Bring the character back to the screen
-                character2.x = screenWidth / 2 + 250
-                character2.y = screenHeight
+                character2.x = baseWidth / 2 + 250
+                character2.y = baseHeight
                 character2.velocityX = 0
                 character2.velocityY = 0
             end
@@ -1112,11 +1136,8 @@ function level1:calculateCorrectAnswer()
     -- Example calculation using scaled values
     local leftSide = roof.height
     local topSide = roof.width
-    print(correctAnswer)
     -- Your specific calculation here using the scaled values
-    correctAnswer = leftSide * topSide * 0.5
-    print(correctAnswer) -- Or whatever calculation you need
-    
+    correctAnswer = leftSide * topSide 
     -- Round to 1 decimal place to avoid floating point issues
     correctAnswer = math.floor(correctAnswer * 10) / 10
 end
@@ -1173,6 +1194,7 @@ function level1:checkAnswer()
         print("State changed to FEEDBACK, feedbackState:", feedbackState)
     end
 end
+
 function level1:drawTube()
     love.graphics.setColor(0.6, 0.6, 0.6) -- Tube color
     local tubeWidth = 10
@@ -1208,7 +1230,7 @@ function level1:drawColumns()
     
     for i = 1, numColumns do
         local columnX = mainBuilding.x + columnSpacing * i + (columnWidth * (i - 1))
-        local columnY = mainBuilding.y+5
+        local columnY = mainBuilding.y + 5
         
         -- Column shadow
         love.graphics.setColor(0.6, 0.6, 0.6, 0.3)
@@ -1246,7 +1268,6 @@ function level1:drawColumns()
     end
     
     love.graphics.setColor(1, 1, 1)
-
 end
 
 function level1:drawProgressBar()
@@ -1276,6 +1297,7 @@ function level1:drawProgressBar()
     love.graphics.setColor(1, 1, 1, 1) -- White text
     love.graphics.printf(progressText, progressBar.x, progressBar.y + (progressBar.height / 2) - 12, progressBar.width, "center")
 end
+
 function level1:drawStairs()
     -- Parameters for stairs
     local numSteps = 3                    -- Fixed number of steps
@@ -1285,7 +1307,7 @@ function level1:drawStairs()
 
     -- Starting position of the stairs (smallest/top step aligns with building)
     local startX = mainBuilding.x
-    local startY = mainBuilding.y + mainBuilding.height-50   -- Adjust position closer to the bottom
+    local startY = mainBuilding.y + mainBuilding.height - 50   -- Adjust position closer to the bottom
 
     -- Draw each step from top to bottom
     for i = 1, numSteps do
@@ -1315,6 +1337,7 @@ function level1:drawStairs()
     love.graphics.setColor(1, 1, 1)
     love.graphics.setLineWidth(1)
 end
+
 function level1:drawWindows()
     local windowWidth = 30
     local windowHeight = 60
@@ -1347,17 +1370,15 @@ function level1:drawWindows()
     love.graphics.setColor(1, 1, 1)
 end
 
-
 -- Function to draw all game elements
 function level1:draw()
-    -- Fixed visual dimensions
-    local visualWidth = 600
-    local visualBaseLength = 400
-    local visualBaseWidth = 150
-    local visualHeight = 140
-
     -- Clear the screen with the background color
     love.graphics.clear(0.529, 0.808, 0.980)
+
+    -- Apply scaling and translation
+    love.graphics.push()
+    love.graphics.translate(offsetX, offsetY)
+    love.graphics.scale(scale)
 
     -- Draw the progress bar
     self:drawProgressBar()
@@ -1409,14 +1430,14 @@ function level1:draw()
     -- Draw the tank image
     if tank.image then
         love.graphics.setColor(1, 1, 1)
-        local scale = tank.width / tank.image:getWidth()
+        local scaleFactor = tank.width / tank.image:getWidth()
         love.graphics.draw(
             tank.image,
             tank.x + 150,
             tank.y + 50,
             0,
-            scale,
-            scale,
+            scaleFactor,
+            scaleFactor,
             tank.image:getWidth() / 2,
             tank.image:getHeight()
         )
@@ -1430,11 +1451,6 @@ function level1:draw()
     -- Draw characters and dialogue
     self:drawDialogue()
     self:drawCharacters()
-    
-
-    -- Draw the calculator and menu buttons
-    self:drawCalculatorButton()
-    self:drawMenuButton()
 
     -- Draw measuring tape if in appropriate state
     if state == STATES.MEASURING or state == STATES.DISPLAY_MEASUREMENTS or
@@ -1490,9 +1506,9 @@ function level1:draw()
     -- After displaying measurements, show volume calculation prompt
     if state == STATES.QUESTION then
         -- Draw a fancy question box with shadow
-        local boxWidth = screenWidth * 0.5
+        local boxWidth = baseWidth * 0.5
         local boxHeight = 160
-        local boxX = (screenWidth - boxWidth) / 3 + 50
+        local boxX = (baseWidth - boxWidth) / 3 + 50
         local boxY = 300
 
         -- Draw shadow
@@ -1555,34 +1571,36 @@ function level1:draw()
     if state == STATES.FEEDBACK then
         -- Draw feedback background
         love.graphics.setColor(0, 0, 0, 0.7)
-        love.graphics.rectangle("fill", screenWidth / 4, screenHeight / 2 - 50, screenWidth / 2, 100, 10, 10)
+        love.graphics.rectangle("fill", baseWidth / 4, baseHeight / 2 - 50, baseWidth / 2, 100, 10, 10)
 
         if feedbackState == "correct" then
             love.graphics.setFont(feedbackFont)
             love.graphics.setColor(0, 1, 0, 1)
-            love.graphics.printf("Correct!", 0, screenHeight / 2 - 20, screenWidth, "center")
+            love.graphics.printf("Correct!", 0, baseHeight / 2 - 20, baseWidth, "center")
         elseif feedbackState == "incorrect" then
             love.graphics.setFont(feedbackFont)
             love.graphics.setColor(1, 0, 0, 1)
-            love.graphics.printf("Incorrect. Try Again!", 0, screenHeight / 2 - 20, screenWidth, "center")
+            love.graphics.printf("Incorrect. Try Again!", 0, baseHeight / 2 - 20, baseWidth, "center")
         end
 
         -- Draw continue prompt
         love.graphics.setFont(defaultFont)
         love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf("Press Enter to continue", 0, screenHeight / 2 + 20, screenWidth, "center")
+        love.graphics.printf("Press Enter to continue", 0, baseHeight / 2 + 20, baseWidth, "center")
     end
 
-    -- Reset color and line width
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.setLineWidth(1)
+    -- Reset transformations
+    love.graphics.pop()
+
+    -- Draw UI elements without scaling
+    self:drawCalculatorButton()
+    self:drawMenuButton()
 
     -- Draw the calculator if it's active
     if calculator then
         calculator:draw()
     end
 end
-
 
 function level1:drawMeasuringTape(startX, startY, endX, endY, displayedDistance)
     -- Calculate the angle between the start and end points
@@ -1610,8 +1628,8 @@ function level1:drawMeasuringTape(startX, startY, endX, endY, displayedDistance)
     love.graphics.rectangle("fill", 0, -tapeWidth / 2, distance, tapeWidth)
 
     -- Draw tick marks on the measuring tape
-    local tickSpacing = 20
     love.graphics.setColor(0, 0, 0)
+    local tickSpacing = 20
     for i = 0, distance, tickSpacing do
         love.graphics.rectangle("fill", i, -tapeWidth / 2, 2, tapeWidth)
     end
@@ -1645,6 +1663,7 @@ function level1:drawMeasuringTape(startX, startY, endX, endY, displayedDistance)
     -- Reset color
     love.graphics.setColor(1, 1, 1)
 end
+
 function level1:drawMenuButton()
     love.graphics.setColor(0.2, 0.2, 0.8, 0.5)
     love.graphics.rectangle("fill", menuButton.x, menuButton.y, menuButton.width, menuButton.height, 5, 5)
@@ -1657,7 +1676,7 @@ function level1:drawMenuButton()
     love.graphics.printf(
         menuButton.text,
         menuButton.x,
-        menuButton.y + (menuButton.height / 2) - ((menuButtonFont or defaultFont):getHeight() / 2),
+        menuButton.y + (menuButton.height / 2) - ((menuButtonFont or defaultFont):getHeight() / 2)-100,
         menuButton.width,
         "center"
     )
